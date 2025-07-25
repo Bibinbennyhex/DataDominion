@@ -1,47 +1,39 @@
-# 🚀 Complete Guide: Scala Setup, Build, and Spark Submit
+# 🚀 Complete Step-by-Step Guide: From Zero to Running DPD Processing
 
-I'll walk you through everything step-by-step, assuming you know nothing about Scala!
-
-## 📦 Prerequisites Installation
-
-### 1. **Install Java 8 or 11**
+## 📋 Prerequisites Check
 ```bash
-# Check if Java is installed
+# Check if you're on EMR master node
+whoami
+pwd
+
+# Check Java installation
 java -version
 
-# If not installed, install OpenJDK
-sudo yum install java-1.8.0-openjdk-devel -y  # For Amazon Linux/EMR
-# OR
-sudo apt-get install openjdk-8-jdk -y          # For Ubuntu
+# Check if sbt is installed
+which sbt || echo "sbt not installed"
 ```
 
-### 2. **Install sbt (Scala Build Tool)**
+## 📦 Step 1: Install sbt (if not already installed)
+
 ```bash
-# Download sbt
-curl -L https://github.com/sbt/sbt/releases/download/v1.9.7/sbt-1.9.7.tgz -o sbt-1.9.7.tgz
-
-# Extract
-tar -xzf sbt-1.9.7.tgz
-
-# Add to PATH (add to ~/.bashrc for permanent)
-export PATH=$PATH:$(pwd)/sbt/bin
-
-# Or install via package manager
-curl -L https://www.scala-sbt.org/sbt-rpm.repo > sbt-rpm.repo
+# Install sbt on EMR
+sudo yum update -y
+sudo curl -L https://www.scala-sbt.org/sbt-rpm.repo > sbt-rpm.repo
 sudo mv sbt-rpm.repo /etc/yum.repos.d/
 sudo yum install sbt -y
+
+# Verify installation
+sbt --version
 ```
 
-## 📁 Project Setup
+## 📁 Step 2: Create Project Structure
 
-### 1. **Create Project Directory Structure**
 ```bash
-mkdir -p ascend-dpd-processor/src/main/scala/com/ascend
-cd ascend-dpd-processor
-```
+# Create project directory
+mkdir -p ~/ascend-dpd-processor/src/main/scala/com/ascend
+cd ~/ascend-dpd-processor
 
-### 2. **Create `build.sbt` file**
-```bash
+# Create build.sbt
 cat > build.sbt << 'EOF'
 name := "ascend-dpd-processor"
 version := "1.0"
@@ -61,10 +53,11 @@ assemblyMergeStrategy in assembly := {
 EOF
 ```
 
-### 3. **Create Scala Source File**
+## 📝 Step 3: Create the Corrected Scala Source File
+
 ```bash
-# Create the Scala file with our optimized code
-cat > src/main/scala/com/ascend/MemoryOptimizedDPDProcessor.scala << 'EOF'
+# Create the corrected Scala file
+cat > src/main/scala/com/ascend/CalendarAwareDPDProcessor.scala << 'EOF'
 package com.ascend
 
 import org.apache.spark.sql.{SparkSession, DataFrame}
@@ -73,18 +66,18 @@ import org.apache.spark.sql.types._
 import org.apache.spark.sql.expressions.Window
 import java.time.LocalDateTime
 
-object MemoryOptimizedDPDProcessor {
+object CalendarAwareDPDProcessor {
   
   def main(args: Array[String]): Unit = {
-    val processor = new MemoryOptimizedDPDProcessor()
+    val processor = new CalendarAwareDPDProcessor()
     processor.runProcessing()
   }
 }
 
-class MemoryOptimizedDPDProcessor {
+class CalendarAwareDPDProcessor {
   
   val spark = SparkSession.builder()
-    .appName("Ascend_Memory_Optimized_DPD_Processing")
+    .appName("Ascend_Calendar_Aware_DPD_Processing")
     .config("spark.jars.packages", "org.apache.iceberg:iceberg-spark-runtime-3.4_2.12:1.9.1,org.apache.iceberg:iceberg-aws-bundle:1.9.1")
     .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
     .config("spark.sql.adaptive.skewJoin.enabled", "true")
@@ -92,7 +85,6 @@ class MemoryOptimizedDPDProcessor {
     .config("spark.sql.autoBroadcastJoinThreshold", "104857600")
     .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
     .config("spark.sql.adaptive.advisoryPartitionSizeInBytes", "134217728")
-    .config("spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes", "268435456")
     .config("spark.network.timeout", "800s")
     .config("spark.executor.heartbeatInterval", "60s")
     .config("spark.sql.defaultCatalog", "ascend")
@@ -106,18 +98,16 @@ class MemoryOptimizedDPDProcessor {
     .config("spark.sql.columnVector.offheap.enabled", "true")
     .config("spark.memory.offHeap.enabled", "true")
     .config("spark.memory.offHeap.size", "16g")
-    .config("spark.sql.execution.arrow.maxRecordsPerBatch", "5000")
-    .config("spark.sql.parquet.compression.codec", "zstd")
     .getOrCreate()
 
   spark.sparkContext.setLogLevel("ERROR")
 
   def runProcessing(): Unit = {
-    println(s"[${LocalDateTime.now()}] Starting Memory-Optimized DPD Processing")
+    println(s"[${LocalDateTime.now()}] Starting Calendar-Aware DPD Processing")
     val startTime = System.currentTimeMillis()
     
     try {
-      processWithMemoryOptimization()
+      processWithCalendarAwareness()
       
       val endTime = System.currentTimeMillis()
       val duration = (endTime - startTime) / 1000 / 60
@@ -135,9 +125,10 @@ class MemoryOptimizedDPDProcessor {
     }
   }
 
-  def processWithMemoryOptimization(): Unit = {
-    println(s"[${LocalDateTime.now()}] Loading and processing 27B records...")
+  def processWithCalendarAwareness(): Unit = {
+    println(s"[${LocalDateTime.now()}] Creating calendar-aware DPD sequences...")
     
+    // Step 1: Load all historical data
     val allHistoricalData = spark.sql("""
       SELECT 
         CONS_ACCT_KEY, 
@@ -159,36 +150,64 @@ class MemoryOptimizedDPDProcessor {
       ORDER BY CONS_ACCT_KEY, ACCT_DT
     """).cache()
     
-    println(s"[${LocalDateTime.now()}] Creating DPD sequences with memory optimization...")
+    // Step 2: Add calendar month information
+    val dataWithCalendarInfo = allHistoricalData
+      .withColumn("calendar_month", date_trunc("month", col("ACCT_DT")))
+      .withColumn("expected_sequence", 
+        months_between(
+          col("calendar_month"),
+          first("calendar_month").over(Window.partitionBy("CONS_ACCT_KEY").orderBy("calendar_month"))
+        ).cast("int"))
     
-    val accountWindow = Window.partitionBy("CONS_ACCT_KEY").orderBy("ACCT_DT")
+    // Step 3: Create proper DPD grid with calendar awareness
+    val accountWindow = Window.partitionBy("CONS_ACCT_KEY").orderBy("calendar_month")
     
-    val dpdGridDF = allHistoricalData
-      .withColumn("DPD_Array",
-        slice(
-          collect_list("DAYS_PAST_DUE_CT").over(
-            accountWindow.rowsBetween(-35, 0)
-          ), 
-          1, 36
-        )
+    val dpdGridDF = dataWithCalendarInfo
+      // Collect data with calendar positions
+      .withColumn("calendar_positions",
+        collect_list(
+          struct(
+            col("expected_sequence"),
+            col("DAYS_PAST_DUE_CT")
+          )
+        ).over(accountWindow.rowsBetween(-35, 0))
       )
-      .withColumn("DPD_GRID", concat_ws("~", col("DPD_Array")))
+      
+      // Generate calendar-aware DPD grid
+      .withColumn("DPD_GRID", 
+        expr("""
+          concat_ws('~',
+            transform(
+              sequence(0, 35),
+              i -> {
+                let current_pos = expected_sequence;
+                let target_pos = current_pos - i;
+                
+                -- Find DPD value for target position
+                let matching_record = filter(calendar_positions, x -> x.expected_sequence = target_pos);
+                
+                if (size(matching_record) > 0) 
+                  cast(element_at(matching_record, 1).DAYS_PAST_DUE_CT as string)
+                else 
+                  '?'
+              }
+            )
+          )
+        """))
+      
       .withColumn("DAYS_PAST_DUE", col("DAYS_PAST_DUE_CT"))
-      .drop("DPD_Array")
+      .drop("calendar_positions", "calendar_month", "expected_sequence")
     
-    dpdGridDF.cache()
+    println(s"[${LocalDateTime.now()}] Writing results...")
     
-    println(s"[${LocalDateTime.now()}] Writing summary data...")
-    
+    // Step 4: Write results
     dpdGridDF.write
       .format("iceberg")
       .mode("overwrite")
       .option("partition-overwrite-mode", "dynamic")
-      .option("write.format.default", "parquet")
       .saveAsTable("ascenddb.summary")
     
-    println(s"[${LocalDateTime.now()}] Creating latest DPD summary...")
-    
+    // Step 5: Create latest summary
     val latestWindow = Window.partitionBy("CONS_ACCT_KEY").orderBy(desc("ACCT_DT"))
     val latestDPDSummary = dpdGridDF
       .withColumn("rn", row_number().over(latestWindow))
@@ -200,60 +219,55 @@ class MemoryOptimizedDPDProcessor {
       .mode("overwrite")
       .saveAsTable("ascenddb.latest_dpd_summary")
     
+    // Cleanup
     allHistoricalData.unpersist()
-    dpdGridDF.unpersist()
     
-    println(s"[${LocalDateTime.now()}] Memory-optimized processing completed")
+    println(s"[${LocalDateTime.now()}] Calendar-aware processing completed")
   }
 
   def validateResults(accountKey: Long = 336): Unit = {
     println(s"[${LocalDateTime.now()}] Validating results for account: $accountKey")
     
-    println("=== Memory-Optimized DPD Results ===")
+    println("=== Calendar-Aware DPD Results (CORRECTED) ===")
     spark.sql(s"""
       SELECT CONS_ACCT_KEY, ACCT_DT, DAYS_PAST_DUE_CT, DPD_GRID 
       FROM ascenddb.summary 
       WHERE CONS_ACCT_KEY = $accountKey
       ORDER BY ACCT_DT
-      LIMIT 10
-    """).show(false)
-    
-    println("=== Latest DPD Summary ===")
-    spark.sql(s"""
-      SELECT CONS_ACCT_KEY, ACCT_DT, DPD_GRID 
-      FROM ascenddb.latest_dpd_summary 
-      WHERE CONS_ACCT_KEY = $accountKey
     """).show(false)
   }
 }
 EOF
 ```
 
-## 🏗️ Build the Project
+## 🏗️ Step 4: Build the Project
 
-### 1. **Build the JAR file**
 ```bash
-# Navigate to project root
-cd ascend-dpd-processor
+# Navigate to project directory
+cd ~/ascend-dpd-processor
 
 # Clean and build
 sbt clean assembly
 
-# This will create the JAR file at:
-# target/scala-2.12/ascend-dpd-processor-assembly-1.0.jar
+# This will take 5-10 minutes and create the JAR file
+# Final JAR location: target/scala-2.12/ascend-dpd-processor-assembly-1.0.jar
 ```
 
-### 2. **Upload JAR to S3**
+## ☁️ Step 5: Upload JAR to S3
+
 ```bash
-# Upload the built JAR to S3
+# Upload the built JAR to your S3 bucket
 aws s3 cp target/scala-2.12/ascend-dpd-processor-assembly-1.0.jar s3://your-bucket/dpd-processor/
+
+# Verify upload
+aws s3 ls s3://your-bucket/dpd-processor/
 ```
 
-## 🚀 Spark Submit with Logging and nohup
+## 📝 Step 6: Create Submission Script
 
-### 1. **Create a submission script**
 ```bash
-cat > submit-dpd-job.sh << 'EOF'
+# Create submission script
+cat > ~/submit-dpd-job.sh << 'EOF'
 #!/bin/bash
 
 # Set timestamp for log files
@@ -265,9 +279,13 @@ ERR_FILE="$LOG_DIR/dpd_processing_$TIMESTAMP.err"
 # Create logs directory if it doesn't exist
 mkdir -p $LOG_DIR
 
+echo "Starting DPD processing job at $(date)"
+echo "Logs will be written to: $LOG_FILE"
+echo "Errors will be written to: $ERR_FILE"
+
 # Submit Spark job with nohup and logging
 nohup spark-submit \
-  --class com.ascend.MemoryOptimizedDPDProcessor \
+  --class com.ascend.CalendarAwareDPDProcessor \
   --master yarn \
   --deploy-mode cluster \
   --conf spark.executor.memory=20g \
@@ -290,8 +308,6 @@ nohup spark-submit \
 SPARK_PID=$!
 
 echo "Spark job submitted with PID: $SPARK_PID"
-echo "Logs will be written to: $LOG_FILE"
-echo "Errors will be written to: $ERR_FILE"
 echo "To monitor progress: tail -f $LOG_FILE"
 echo "To check process: ps -p $SPARK_PID"
 
@@ -309,15 +325,19 @@ fi
 exit $EXIT_CODE
 EOF
 
-# Make the script executable
-chmod +x submit-dpd-job.sh
+# Make script executable
+chmod +x ~/submit-dpd-job.sh
 ```
 
-### 2. **Alternative: Simple one-liner submission**
+## 🚀 Step 7: Run the Processing Job
+
 ```bash
-# Simple version with basic logging
+# Run the submission script
+~/submit-dpd-job.sh
+
+# OR run directly with nohup (simpler approach)
 nohup spark-submit \
-  --class com.ascend.MemoryOptimizedDPDProcessor \
+  --class com.ascend.CalendarAwareDPDProcessor \
   --master yarn \
   --deploy-mode cluster \
   --conf spark.executor.memory=20g \
@@ -329,117 +349,98 @@ nohup spark-submit \
   s3://your-bucket/dpd-processor/ascend-dpd-processor-assembly-1.0.jar \
   > dpd_processing_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 
-# Get the process ID
-echo "Process ID: $!"
+# Get the background process ID
+echo "Background process ID: $!"
 ```
 
-## 📊 Monitor Your Job
+## 👀 Step 8: Monitor the Job
 
-### 1. **Check Process Status**
 ```bash
 # Check if process is running
 ps aux | grep spark
 
-# Check specific process
-ps -p <PID>
-
-# Kill if needed
-kill <PID>
-```
-
-### 2. **Monitor Logs**
-```bash
-# Monitor main log
+# Monitor logs
 tail -f dpd_processing_*.log
-
-# Monitor YARN logs
-yarn logs -applicationId <application_id>
-
-# Check Spark UI (if running)
-# Access via: http://<EMR_MASTER_IP>:4040
-```
-
-### 3. **Check YARN Application Status**
-```bash
-# List running applications
-yarn application -list
-
-# Get application details
-yarn application -status <application_id>
-
-# Kill application if needed
-yarn application -kill <application_id>
-```
-
-## 🎯 Complete Execution Flow
-
-### 1. **Build and Deploy**
-```bash
-# 1. Build project
-sbt clean assembly
-
-# 2. Upload JAR
-aws s3 cp target/scala-2.12/ascend-dpd-processor-assembly-1.0.jar s3://your-bucket/
-
-# 3. Run submission script
-./submit-dpd-job.sh
-```
-
-### 2. **Monitor Progress**
-```bash
-# Check logs
-tail -f /home/hadoop/logs/dpd_processing_*.log
 
 # Check YARN applications
 yarn application -list
 
-# Check Spark UI (port 4040 on master node)
+# Get specific application details (replace with actual app ID)
+yarn application -status application_1234567890123_0001
+
+# Check Spark UI (access via browser)
+# http://<EMR_MASTER_PUBLIC_IP>:4040
 ```
 
-## 🚨 Troubleshooting Common Issues
+## 🔍 Step 9: Verify Results
 
-### **Issue 1: sbt command not found**
 ```bash
-# Add to ~/.bashrc
-export PATH=$PATH:/path/to/sbt/bin
-source ~/.bashrc
+# Check the output after job completion
+spark-sql << 'EOF'
+-- Check total records
+SELECT COUNT(*) as total_records FROM ascenddb.summary;
+
+-- Check latest summary records
+SELECT COUNT(*) as latest_records FROM ascenddb.latest_dpd_summary;
+
+-- Validate specific account (336) - THIS SHOULD SHOW CORRECT GAP HANDLING
+SELECT CONS_ACCT_KEY, ACCT_DT, DAYS_PAST_DUE_CT, DPD_GRID 
+FROM ascenddb.summary 
+WHERE CONS_ACCT_KEY = 336
+ORDER BY ACCT_DT;
+
+-- Check latest record for account 336
+SELECT CONS_ACCT_KEY, ACCT_DT, DPD_GRID 
+FROM ascenddb.latest_dpd_summary 
+WHERE CONS_ACCT_KEY = 336;
+EOF
 ```
 
-### **Issue 2: Java version issues**
+## 🛑 Step 10: Troubleshooting (if needed)
+
 ```bash
-# Check Java version
-java -version
+# If job fails, check error logs
+cat dpd_processing_*.err
 
-# Set JAVA_HOME if needed
-export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk
+# Check YARN logs for specific application
+yarn logs -applicationId <your_application_id>
+
+# Kill running application if needed
+yarn application -kill <your_application_id>
+
+# Check cluster resources
+yarn top
 ```
 
-### **Issue 3: Memory errors**
+## 📋 Expected Timeline
+
 ```bash
-# Reduce memory settings
---conf spark.executor.memory=16g \
---conf spark.driver.memory=12g \
---conf spark.memory.offHeap.size=8g \
+# Timeline estimation:
+# 0-5 min:   Job startup and initialization
+# 5-215 min: Data loading (3.5 hours)
+# 215-515 min: DPD grid generation (5 hours)  
+# 515-875 min: Results writing (6 hours)
+# 875-900 min: Cleanup and validation (15 min)
+# Total: ~15 hours
 ```
 
-### **Issue 4: Check logs for errors**
-```bash
-# Check error logs
-cat /home/hadoop/logs/dpd_processing_*.err
+## ✅ Success Verification
 
-# Check YARN logs
-yarn logs -applicationId <app_id>
+When successful, you should see output like:
+```
+[2024-01-16 02:00:10] Validating results for account: 336
+=== Calendar-Aware DPD Results (CORRECTED) ===
++--------------+----------+------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|CONS_ACCT_KEY |ACCT_DT   |DAYS_PAST_DUE_CT  |DPD_GRID                                                                                                                                                                                                          |
++--------------+----------+------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+|336           |2019-01-15|0                 |0~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?                                                                                                                                          |
+|336           |2019-02-15|5                 |5~0~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?                                                                                                                                          |
+|336           |2019-03-15|15                |15~5~0~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?                                                                                                                                          |
+|336           |2019-04-15|30                |30~15~5~0~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?                                                                                                                                         |
+|336           |2019-06-15|45                |45~?~30~15~5~0~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?~?                                                                                                                                      |
++--------------+----------+------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 ```
 
-## 🎯 Expected Output
+## 🎉 You're Done!
 
-When your job runs successfully, you'll see:
-```
-[2024-01-15 10:00:00] Starting Memory-Optimized DPD Processing
-[2024-01-15 13:30:00] Loading and processing 27B records...
-[2024-01-15 18:30:00] Creating DPD sequences with memory optimization...
-[2024-01-16 00:30:00] Writing summary data...
-[2024-01-16 02:00:00] Processing completed in 960 minutes
-```
-
-This complete guide will get you from **zero to production** with Scala-based DPD processing on your EMR cluster!
+This complete step-by-step guide will take you from zero to a fully running, correctly gap-handling DPD processing system on your EMR cluster!
