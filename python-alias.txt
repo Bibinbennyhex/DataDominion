@@ -1,0 +1,19 @@
+# --- Smart Python alias ---
+function Use-Python {
+    # If running inside a venv, use that venv's Python
+    if ($env:VIRTUAL_ENV) {
+        Write-Verbose "Using Python from venv: $env:VIRTUAL_ENV" -Verbose
+        Set-Alias python "$env:VIRTUAL_ENV\Scripts\python.exe" -Scope Global
+    }
+    else {
+        # Otherwise, use global Python installation
+        $globalPython = "C:\Users\<YourName>\AppData\Local\Programs\Python\Python312\python.exe"
+        if (Test-Path $globalPython) {
+            Write-Verbose "Using global Python: $globalPython" -Verbose
+            Set-Alias python $globalPython -Scope Global
+        }
+    }
+}
+
+# Call once at shell startup
+Use-Python
