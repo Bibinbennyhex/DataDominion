@@ -1,0 +1,84 @@
+26/01/14 19:24:06 INFO SparkContext: Running Spark version 3.5.5
+26/01/14 19:24:06 INFO SparkContext: OS info Linux, 6.6.87.2-microsoft-standard-WSL2, amd64
+26/01/14 19:24:06 INFO SparkContext: Java version 17.0.14
+26/01/14 19:24:06 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/01/14 19:24:06 INFO ResourceUtils: ==============================================================
+26/01/14 19:24:06 INFO ResourceUtils: No custom resources configured for spark.driver.
+26/01/14 19:24:06 INFO ResourceUtils: ==============================================================
+26/01/14 19:24:06 INFO SparkContext: Submitted application: Ascend
+26/01/14 19:24:06 INFO ResourceProfile: Default ResourceProfile created, executor resources: Map(cores -> name: cores, amount: 1, script: , vendor: , memory -> name: memory, amount: 1024, script: , vendor: , offHeap -> name: offHeap, amount: 0, script: , vendor: ), task resources: Map(cpus -> name: cpus, amount: 1.0)
+26/01/14 19:24:06 INFO ResourceProfile: Limiting resource is cpu
+26/01/14 19:24:06 INFO ResourceProfileManager: Added ResourceProfile id: 0
+26/01/14 19:24:07 INFO SecurityManager: Changing view acls to: root
+26/01/14 19:24:07 INFO SecurityManager: Changing modify acls to: root
+26/01/14 19:24:07 INFO SecurityManager: Changing view acls groups to: 
+26/01/14 19:24:07 INFO SecurityManager: Changing modify acls groups to: 
+26/01/14 19:24:07 INFO SecurityManager: SecurityManager: authentication disabled; ui acls disabled; users with view permissions: root; groups with view permissions: EMPTY; users with modify permissions: root; groups with modify permissions: EMPTY
+26/01/14 19:24:07 INFO Utils: Successfully started service 'sparkDriver' on port 35197.
+26/01/14 19:24:07 INFO SparkEnv: Registering MapOutputTracker
+26/01/14 19:24:08 INFO SparkEnv: Registering BlockManagerMaster
+26/01/14 19:24:08 INFO BlockManagerMasterEndpoint: Using org.apache.spark.storage.DefaultTopologyMapper for getting topology information
+26/01/14 19:24:08 INFO BlockManagerMasterEndpoint: BlockManagerMasterEndpoint up
+26/01/14 19:24:08 INFO SparkEnv: Registering BlockManagerMasterHeartbeat
+26/01/14 19:24:08 INFO DiskBlockManager: Created local directory at /tmp/blockmgr-1f4767fc-493f-4b55-a2a0-d64b39b16213
+26/01/14 19:24:08 INFO MemoryStore: MemoryStore started with capacity 434.4 MiB
+26/01/14 19:24:08 INFO SparkEnv: Registering OutputCommitCoordinator
+26/01/14 19:24:08 INFO JettyUtils: Start Jetty 0.0.0.0:4040 for SparkUI
+26/01/14 19:24:08 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+26/01/14 19:24:08 WARN Utils: Service 'SparkUI' could not bind on port 4041. Attempting port 4042.
+26/01/14 19:24:08 INFO Utils: Successfully started service 'SparkUI' on port 4042.
+26/01/14 19:24:08 INFO Executor: Starting executor ID driver on host 8afd0b4f4563
+26/01/14 19:24:08 INFO Executor: OS info Linux, 6.6.87.2-microsoft-standard-WSL2, amd64
+26/01/14 19:24:08 INFO Executor: Java version 17.0.14
+26/01/14 19:24:08 INFO Executor: Starting executor with user classpath (userClassPathFirst = false): ''
+26/01/14 19:24:08 INFO Executor: Created or updated repl class loader org.apache.spark.util.MutableURLClassLoader@73bbc802 for default.
+26/01/14 19:24:09 INFO Utils: Successfully started service 'org.apache.spark.network.netty.NettyBlockTransferService' on port 37395.
+26/01/14 19:24:09 INFO NettyBlockTransferService: Server created on 8afd0b4f4563:37395
+26/01/14 19:24:09 INFO BlockManager: Using org.apache.spark.storage.RandomBlockReplicationPolicy for block replication policy
+26/01/14 19:24:09 INFO BlockManagerMaster: Registering BlockManager BlockManagerId(driver, 8afd0b4f4563, 37395, None)
+26/01/14 19:24:09 INFO BlockManagerMasterEndpoint: Registering block manager 8afd0b4f4563:37395 with 434.4 MiB RAM, BlockManagerId(driver, 8afd0b4f4563, 37395, None)
+26/01/14 19:24:09 INFO BlockManagerMaster: Registered BlockManager BlockManagerId(driver, 8afd0b4f4563, 37395, None)
+26/01/14 19:24:09 INFO BlockManager: Initialized BlockManager: BlockManagerId(driver, 8afd0b4f4563, 37395, None)
+26/01/14 19:24:09 INFO SingleEventLogFileWriter: Logging events to file:/home/iceberg/spark-events/local-1768418648841.inprogress
+<pyspark.sql.session.SparkSession object at 0x715996b57d30>
+✓ Created Iceberg table: default.summary
+Processing accounts to generate summary history...
+Writing to default.summary...
+✓ Data populated.
+
+============================================================
+Sample Data Preview:
+============================================================
++-------------+------------+---------------+-----------+--------------+
+|cons_acct_key|rpt_as_of_mo|current_balance|current_dpd|account_status|
++-------------+------------+---------------+-----------+--------------+
+|            5|     2018-12|           1047|          0|       CURRENT|
+|            5|     2018-11|           1046|          0|       CURRENT|
+|            5|     2018-10|           1045|          0|       CURRENT|
+|            5|     2022-02|           1085|          0|       CURRENT|
+|            5|     2022-03|           1086|          0|       CURRENT|
+|            5|     2022-01|           1084|          0|       CURRENT|
+|            5|     2022-06|           1089|          0|       CURRENT|
+|            5|     2022-07|           1090|          0|       CURRENT|
+|            5|     2022-04|           1087|          0|       CURRENT|
+|            5|     2022-05|           1088|          0|       CURRENT|
+|            5|     2016-09|           1020|          0|       CURRENT|
+|            5|     2016-07|           1018|          0|       CURRENT|
+|            5|     2016-08|           1019|          0|       CURRENT|
+|            5|     2016-05|           1016|          0|       CURRENT|
+|            5|     2016-06|           1017|          0|       CURRENT|
+|            5|     2016-03|           1014|          0|       CURRENT|
+|            5|     2016-04|           1015|          0|       CURRENT|
+|            5|     2016-01|           1012|          0|       CURRENT|
+|            5|     2016-02|           1013|          0|       CURRENT|
+|            5|     2024-12|           1119|          0|       CURRENT|
++-------------+------------+---------------+-----------+--------------+
+
+
+Table History (Iceberg snapshots):
++-----------------------+-------------------+---------+-------------------+
+|made_current_at        |snapshot_id        |parent_id|is_current_ancestor|
++-----------------------+-------------------+---------+-------------------+
+|2026-01-14 19:24:46.387|7286762828026342265|NULL     |true               |
++-----------------------+-------------------+---------+-------------------+
+

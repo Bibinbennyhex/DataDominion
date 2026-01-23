@@ -1,0 +1,155 @@
+{
+    "environment": "production",
+    "version": "7.0",
+    "tables": {
+        "source": "default.accounts_all",
+        "summary": "default.summary",
+        "latest_summary": "default.latest_summary",
+        "account_metadata": "default.account_metadata",
+        "audit": "default.pipeline_audit",
+        "checkpoint": "default.pipeline_checkpoint",
+        "metrics": "default.pipeline_metrics"
+    },
+    "keys": {
+        "primary": "cons_acct_key",
+        "partition": "rpt_as_of_mo",
+        "timestamp": "base_ts",
+        "primary_date": "acct_dt"
+    },
+    "history": {
+        "length": 36,
+        "gap_placeholder": null
+    },
+    "columns": {
+        "cons_acct_key": "cons_acct_key",
+        "bureau_mbr_id": "bureau_member_id",
+        "port_type_cd": "portfolio_rating_type_cd",
+        "acct_type_dtl_cd": "acct_type_dtl_cd",
+        "acct_open_dt": "open_dt",
+        "acct_closed_dt": "closed_dt",
+        "acct_dt": "acct_dt",
+        "acct_stat_cd": "acct_stat_cd",
+        "acct_credit_ext_am": "credit_limit_am",
+        "acct_bal_am": "balance_am",
+        "past_due_am": "past_due_am",
+        "actual_pymt_am": "actual_payment_am",
+        "days_past_due_ct_4in": "days_past_due",
+        "asset_class_cd_4in": "asset_class_cd",
+        "base_ts": "base_ts",
+        "rpt_as_of_mo": "rpt_as_of_mo"
+    },
+    "rolling_columns": [
+        {
+            "name": "balance",
+            "source_column": "balance_am",
+            "mapper_expr": "CASE WHEN balance_am IN (-2147483647, -1) THEN NULL ELSE balance_am END",
+            "data_type": "Integer",
+            "history_length": 36
+        },
+        {
+            "name": "payment",
+            "source_column": "actual_payment_am",
+            "mapper_expr": "CASE WHEN actual_payment_am IN (-2147483647, -1) THEN NULL ELSE actual_payment_am END",
+            "data_type": "Integer",
+            "history_length": 36
+        },
+        {
+            "name": "credit_limit",
+            "source_column": "credit_limit_am",
+            "mapper_expr": "credit_limit_am",
+            "data_type": "Integer",
+            "history_length": 36
+        },
+        {
+            "name": "days_past_due",
+            "source_column": "days_past_due",
+            "mapper_expr": "days_past_due",
+            "data_type": "Integer",
+            "history_length": 36
+        },
+        {
+            "name": "payment_rating",
+            "source_column": "payment_rating_cd",
+            "mapper_expr": "CASE WHEN days_past_due < 0 THEN asset_class_cd WHEN days_past_due <= 29 THEN '0' WHEN days_past_due <= 59 THEN '1' WHEN days_past_due <= 89 THEN '2' WHEN days_past_due <= 119 THEN '3' WHEN days_past_due <= 149 THEN '4' WHEN days_past_due <= 179 THEN '5' ELSE '6' END",
+            "data_type": "String",
+            "history_length": 36
+        }
+    ],
+    "grid_columns": [
+        {
+            "name": "payment_history_grid",
+            "source_rolling": "payment_rating",
+            "null_placeholder": "?",
+            "separator": ""
+        }
+    ],
+    "optimization": {
+        "bloom_filter": {
+            "enabled": true,
+            "expected_items": 10000000,
+            "false_positive_rate": 0.01
+        },
+        "bucketing": {
+            "enabled": true,
+            "num_buckets": 64,
+            "bucket_column": "cons_acct_key"
+        },
+        "z_ordering": {
+            "enabled": true,
+            "columns": [
+                "cons_acct_key",
+                "rpt_as_of_mo"
+            ]
+        },
+        "columnar_projection": {
+            "enabled": true
+        },
+        "parallel_cases": {
+            "enabled": true,
+            "max_parallel": 2
+        }
+    },
+    "streaming": {
+        "enabled": true,
+        "micro_batch_size": 50000000,
+        "checkpoint_after_batch": true,
+        "max_concurrent_batches": 3
+    },
+    "gpu": {
+        "enabled": false,
+        "rapids_enabled": false,
+        "photon_enabled": false
+    },
+    "performance": {
+        "target_records_per_partition": 5000000,
+        "min_partitions": 64,
+        "max_partitions": 16384,
+        "avg_record_size_bytes": 200,
+        "max_file_size_mb": 256,
+        "broadcast_threshold_mb": 100,
+        "optimization_interval": 6
+    },
+    "resilience": {
+        "retry_count": 3,
+        "retry_backoff_base": 2,
+        "retry_max_delay_seconds": 300,
+        "checkpoint_enabled": true,
+        "checkpoint_granularity": "batch"
+    },
+    "spark": {
+        "app_name": "SummaryPipeline_v7",
+        "adaptive_enabled": true,
+        "adaptive_coalesce": true,
+        "adaptive_skew_join": true,
+        "dynamic_partition_pruning": true,
+        "broadcast_timeout": 600,
+        "network_timeout": "800s",
+        "shuffle_service_enabled": true,
+        "speculation_enabled": true
+    },
+    "metrics": {
+        "enabled": true,
+        "collect_detailed": true,
+        "push_to_table": true
+    }
+}

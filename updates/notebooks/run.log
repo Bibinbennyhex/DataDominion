@@ -1,0 +1,131 @@
+26/01/14 19:02:23 INFO SparkContext: Running Spark version 3.5.5
+26/01/14 19:02:23 INFO SparkContext: OS info Linux, 6.6.87.2-microsoft-standard-WSL2, amd64
+26/01/14 19:02:23 INFO SparkContext: Java version 17.0.14
+26/01/14 19:02:23 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/01/14 19:02:23 INFO ResourceUtils: ==============================================================
+26/01/14 19:02:23 INFO ResourceUtils: No custom resources configured for spark.driver.
+26/01/14 19:02:23 INFO ResourceUtils: ==============================================================
+26/01/14 19:02:23 INFO SparkContext: Submitted application: IcebergAccountsAllSetup
+26/01/14 19:02:23 INFO ResourceProfile: Default ResourceProfile created, executor resources: Map(cores -> name: cores, amount: 1, script: , vendor: , memory -> name: memory, amount: 1024, script: , vendor: , offHeap -> name: offHeap, amount: 0, script: , vendor: ), task resources: Map(cpus -> name: cpus, amount: 1.0)
+26/01/14 19:02:23 INFO ResourceProfile: Limiting resource is cpu
+26/01/14 19:02:23 INFO ResourceProfileManager: Added ResourceProfile id: 0
+26/01/14 19:02:23 INFO SecurityManager: Changing view acls to: root
+26/01/14 19:02:23 INFO SecurityManager: Changing modify acls to: root
+26/01/14 19:02:23 INFO SecurityManager: Changing view acls groups to: 
+26/01/14 19:02:23 INFO SecurityManager: Changing modify acls groups to: 
+26/01/14 19:02:23 INFO SecurityManager: SecurityManager: authentication disabled; ui acls disabled; users with view permissions: root; groups with view permissions: EMPTY; users with modify permissions: root; groups with modify permissions: EMPTY
+26/01/14 19:02:24 INFO Utils: Successfully started service 'sparkDriver' on port 34047.
+26/01/14 19:02:24 INFO SparkEnv: Registering MapOutputTracker
+26/01/14 19:02:24 INFO SparkEnv: Registering BlockManagerMaster
+26/01/14 19:02:24 INFO BlockManagerMasterEndpoint: Using org.apache.spark.storage.DefaultTopologyMapper for getting topology information
+26/01/14 19:02:24 INFO BlockManagerMasterEndpoint: BlockManagerMasterEndpoint up
+26/01/14 19:02:24 INFO SparkEnv: Registering BlockManagerMasterHeartbeat
+26/01/14 19:02:24 INFO DiskBlockManager: Created local directory at /tmp/blockmgr-ae43e901-bb3e-4fe4-afe0-46bce4d6c86c
+26/01/14 19:02:24 INFO MemoryStore: MemoryStore started with capacity 434.4 MiB
+26/01/14 19:02:24 INFO SparkEnv: Registering OutputCommitCoordinator
+26/01/14 19:02:24 INFO JettyUtils: Start Jetty 0.0.0.0:4040 for SparkUI
+26/01/14 19:02:24 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+26/01/14 19:02:24 WARN Utils: Service 'SparkUI' could not bind on port 4041. Attempting port 4042.
+26/01/14 19:02:24 INFO Utils: Successfully started service 'SparkUI' on port 4042.
+26/01/14 19:02:25 INFO Executor: Starting executor ID driver on host 8afd0b4f4563
+26/01/14 19:02:25 INFO Executor: OS info Linux, 6.6.87.2-microsoft-standard-WSL2, amd64
+26/01/14 19:02:25 INFO Executor: Java version 17.0.14
+26/01/14 19:02:25 INFO Executor: Starting executor with user classpath (userClassPathFirst = false): ''
+26/01/14 19:02:25 INFO Executor: Created or updated repl class loader org.apache.spark.util.MutableURLClassLoader@3ff4536f for default.
+26/01/14 19:02:25 INFO Utils: Successfully started service 'org.apache.spark.network.netty.NettyBlockTransferService' on port 35399.
+26/01/14 19:02:25 INFO NettyBlockTransferService: Server created on 8afd0b4f4563:35399
+26/01/14 19:02:25 INFO BlockManager: Using org.apache.spark.storage.RandomBlockReplicationPolicy for block replication policy
+26/01/14 19:02:25 INFO BlockManagerMaster: Registering BlockManager BlockManagerId(driver, 8afd0b4f4563, 35399, None)
+26/01/14 19:02:25 INFO BlockManagerMasterEndpoint: Registering block manager 8afd0b4f4563:35399 with 434.4 MiB RAM, BlockManagerId(driver, 8afd0b4f4563, 35399, None)
+26/01/14 19:02:25 INFO BlockManagerMaster: Registered BlockManager BlockManagerId(driver, 8afd0b4f4563, 35399, None)
+26/01/14 19:02:25 INFO BlockManager: Initialized BlockManager: BlockManagerId(driver, 8afd0b4f4563, 35399, None)
+26/01/14 19:02:25 INFO SingleEventLogFileWriter: Logging events to file:/home/iceberg/spark-events/local-1768417344935.inprogress
+26/01/14 19:02:26 INFO SharedState: Setting hive.metastore.warehouse.dir ('null') to the value of spark.sql.warehouse.dir.
+26/01/14 19:02:26 INFO SharedState: Warehouse path is 'file:/opt/spark/spark-warehouse'.
+26/01/14 19:02:29 INFO CatalogUtil: Loading custom FileIO implementation: org.apache.iceberg.aws.s3.S3FileIO
+26/01/14 19:02:30 INFO CatalogUtil: Loading custom FileIO implementation: org.apache.iceberg.aws.s3.S3FileIO
+Traceback (most recent call last):
+  File "/home/iceberg/notebooks/notebooks/iceberg_accounts_all.py", line 186, in <module>
+    main()
+  File "/home/iceberg/notebooks/notebooks/iceberg_accounts_all.py", line 169, in main
+    create_accounts_all_table(spark)
+  File "/home/iceberg/notebooks/notebooks/iceberg_accounts_all.py", line 81, in create_accounts_all_table
+    spark.sql(create_sql)
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/sql/session.py", line 1631, in sql
+    return DataFrame(self._jsparkSession.sql(sqlQuery, litArgs), self)
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/java_gateway.py", line 1322, in __call__
+    return_value = get_return_value(
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py", line 179, in deco
+    return f(*a, **kw)
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/protocol.py", line 326, in get_return_value
+    raise Py4JJavaError(
+py4j.protocol.Py4JJavaError: An error occurred while calling o58.sql.
+: org.apache.iceberg.exceptions.NoSuchTableException: Invalid table identifier: accounts_all
+	at org.apache.iceberg.rest.RESTSessionCatalog.checkIdentifierIsValid(RESTSessionCatalog.java:1161)
+	at org.apache.iceberg.rest.RESTSessionCatalog$Builder.<init>(RESTSessionCatalog.java:795)
+	at org.apache.iceberg.rest.RESTSessionCatalog.buildTable(RESTSessionCatalog.java:574)
+	at org.apache.iceberg.catalog.BaseSessionCatalog$AsCatalog.buildTable(BaseSessionCatalog.java:84)
+	at org.apache.iceberg.rest.RESTCatalog.buildTable(RESTCatalog.java:112)
+	at org.apache.iceberg.CachingCatalog$CachingTableBuilder.<init>(CachingCatalog.java:222)
+	at org.apache.iceberg.CachingCatalog.buildTable(CachingCatalog.java:214)
+	at org.apache.iceberg.spark.SparkCatalog.newBuilder(SparkCatalog.java:1007)
+	at org.apache.iceberg.spark.SparkCatalog.createTable(SparkCatalog.java:240)
+	at org.apache.spark.sql.connector.catalog.TableCatalog.createTable(TableCatalog.java:223)
+	at org.apache.spark.sql.execution.datasources.v2.CreateTableExec.run(CreateTableExec.scala:44)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result$lzycompute(V2CommandExec.scala:43)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.result(V2CommandExec.scala:43)
+	at org.apache.spark.sql.execution.datasources.v2.V2CommandExec.executeCollect(V2CommandExec.scala:49)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:107)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:125)
+	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:201)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:108)
+	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:66)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:107)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:461)
+	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(origin.scala:76)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:461)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:32)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:437)
+	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:98)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:85)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:83)
+	at org.apache.spark.sql.Dataset.<init>(Dataset.scala:220)
+	at org.apache.spark.sql.Dataset$.$anonfun$ofRows$2(Dataset.scala:100)
+	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+	at org.apache.spark.sql.Dataset$.ofRows(Dataset.scala:97)
+	at org.apache.spark.sql.SparkSession.$anonfun$sql$1(SparkSession.scala:638)
+	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:900)
+	at org.apache.spark.sql.SparkSession.sql(SparkSession.scala:629)
+	at org.apache.spark.sql.SparkSession.sql(SparkSession.scala:659)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:569)
+	at py4j.reflection.MethodInvoker.invoke(MethodInvoker.java:244)
+	at py4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:374)
+	at py4j.Gateway.invoke(Gateway.java:282)
+	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
+	at py4j.commands.CallCommand.execute(CallCommand.java:79)
+	at py4j.ClientServerConnection.waitForCommands(ClientServerConnection.java:182)
+	at py4j.ClientServerConnection.run(ClientServerConnection.java:106)
+	at java.base/java.lang.Thread.run(Thread.java:840)
+
+26/01/14 19:02:32 INFO SparkContext: Invoking stop() from shutdown hook
+26/01/14 19:02:32 INFO SparkContext: SparkContext is stopping with exitCode 0.
+26/01/14 19:02:32 INFO SparkUI: Stopped Spark web UI at http://8afd0b4f4563:4042
+26/01/14 19:02:32 INFO MapOutputTrackerMasterEndpoint: MapOutputTrackerMasterEndpoint stopped!
+26/01/14 19:02:32 INFO MemoryStore: MemoryStore cleared
+26/01/14 19:02:32 INFO BlockManager: BlockManager stopped
+26/01/14 19:02:32 INFO BlockManagerMaster: BlockManagerMaster stopped
+26/01/14 19:02:32 INFO OutputCommitCoordinator$OutputCommitCoordinatorEndpoint: OutputCommitCoordinator stopped!
+26/01/14 19:02:32 INFO SparkContext: Successfully stopped SparkContext
+26/01/14 19:02:32 INFO ShutdownHookManager: Shutdown hook called
+26/01/14 19:02:32 INFO ShutdownHookManager: Deleting directory /tmp/spark-aba17b27-ef8a-4237-8f32-ac86263ea148
+26/01/14 19:02:32 INFO ShutdownHookManager: Deleting directory /tmp/spark-13f3f309-784d-4708-a847-bfa0e62b4ef5/pyspark-c5f94a7a-d809-4f43-8cb6-1a19f6c39e49
+26/01/14 19:02:32 INFO ShutdownHookManager: Deleting directory /tmp/spark-13f3f309-784d-4708-a847-bfa0e62b4ef5

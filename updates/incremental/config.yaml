@@ -1,0 +1,70 @@
+# Incremental Summary Update Configuration
+# ==========================================
+# 
+# This configuration file controls the behavior of the incremental
+# summary update pipeline. All settings can be overridden via CLI.
+
+# ============================================================
+# Table Configuration
+# ============================================================
+
+# Source table containing raw account records
+accounts_table: "default.default.accounts_all"
+
+# Target summary table with history arrays
+summary_table: "default.summary_testing"
+
+# ============================================================
+# Processing Parameters
+# ============================================================
+
+# Number of months in history arrays
+history_length: 36
+
+# Records per processing batch (for memory management)
+batch_size: 100000
+
+# Maximum parallelism for Spark operations
+max_parallelism: 200
+
+# ============================================================
+# Feature Flags
+# ============================================================
+
+# If true, preview changes without writing to database
+dry_run: false
+
+# Run validation checks after update
+validate: true
+
+# Enable Spark checkpointing for fault tolerance
+use_checkpointing: false
+
+# Directory for checkpoints
+checkpoint_dir: "/tmp/spark-checkpoints"
+
+# ============================================================
+# Performance Tuning
+# ============================================================
+
+# Tables smaller than this (MB) will be broadcast
+broadcast_threshold_mb: 100
+
+# Enable Spark Adaptive Query Execution
+adaptive_enabled: true
+
+# Enable skew join optimization
+skew_join_enabled: true
+
+# Enable dynamic partition pruning
+dynamic_partition_pruning: true
+
+# ============================================================
+# Logging & Metrics
+# ============================================================
+
+# Logging level: DEBUG, INFO, WARN, ERROR
+log_level: "INFO"
+
+# Collect and report pipeline metrics
+metrics_enabled: true
