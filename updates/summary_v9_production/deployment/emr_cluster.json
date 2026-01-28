@@ -1,0 +1,117 @@
+{
+    "Name": "DPD-Summary-Pipeline-v9",
+    "ReleaseLabel": "emr-6.15.0",
+    "Applications": [
+        {"Name": "Spark"},
+        {"Name": "Hadoop"},
+        {"Name": "Hive"}
+    ],
+    "Instances": {
+        "InstanceGroups": [
+            {
+                "Name": "Master",
+                "InstanceRole": "MASTER",
+                "InstanceType": "r6i.4xlarge",
+                "InstanceCount": 1,
+                "Market": "ON_DEMAND"
+            },
+            {
+                "Name": "Core-OnDemand",
+                "InstanceRole": "CORE",
+                "InstanceType": "r6i.8xlarge",
+                "InstanceCount": 20,
+                "Market": "ON_DEMAND",
+                "EbsConfiguration": {
+                    "EbsBlockDeviceConfigs": [
+                        {
+                            "VolumeSpecification": {
+                                "VolumeType": "gp3",
+                                "SizeInGB": 500,
+                                "Iops": 6000,
+                                "Throughput": 500
+                            },
+                            "VolumesPerInstance": 2
+                        }
+                    ]
+                }
+            },
+            {
+                "Name": "Task-Spot",
+                "InstanceRole": "TASK",
+                "InstanceType": "r6i.8xlarge",
+                "InstanceCount": 30,
+                "Market": "SPOT",
+                "BidPrice": "OnDemandPrice"
+            }
+        ],
+        "Ec2SubnetId": "subnet-xxxxxxxx",
+        "KeepJobFlowAliveWhenNoSteps": false
+    },
+    "Steps": [
+        {
+            "Name": "Summary Pipeline v9.1",
+            "ActionOnFailure": "TERMINATE_CLUSTER",
+            "HadoopJarStep": {
+                "Jar": "command-runner.jar",
+                "Args": [
+                    "spark-submit",
+                    "--master", "yarn",
+                    "--deploy-mode", "cluster",
+                    "--name", "DPD-Summary-Pipeline-v9-fixed",
+                    "--conf", "spark.yarn.maxAppAttempts=2",
+                    "--conf", "spark.sql.shuffle.partitions=8192",
+                    "--conf", "spark.dynamicAllocation.enabled=true",
+                    "--conf", "spark.dynamicAllocation.maxExecutors=250",
+                    "s3://your-bucket/pipeline/summary_pipeline.py",
+                    "--config", "s3://your-bucket/pipeline/pipeline_config.json",
+                    "--mode", "incremental"
+                ]
+            }
+        }
+    ],
+    "BootstrapActions": [
+        {
+            "Name": "Install Dependencies",
+            "ScriptBootstrapAction": {
+                "Path": "s3://your-bucket/bootstrap/install_dependencies.sh"
+            }
+        }
+    ],
+    "Configurations": [
+        {
+            "Classification": "spark-defaults",
+            "Properties": {
+                "spark.executor.instances": "150",
+                "spark.executor.cores": "5",
+                "spark.executor.memory": "45g",
+                "spark.executor.memoryOverhead": "8g",
+                "spark.driver.cores": "8",
+                "spark.driver.memory": "64g",
+                "spark.driver.memoryOverhead": "8g",
+                "spark.sql.shuffle.partitions": "8192",
+                "spark.sql.adaptive.enabled": "true",
+                "spark.sql.adaptive.coalescePartitions.enabled": "true",
+                "spark.sql.adaptive.skewJoin.enabled": "true",
+                "spark.sql.autoBroadcastJoinThreshold": "500m",
+                "spark.dynamicAllocation.enabled": "true",
+                "spark.dynamicAllocation.minExecutors": "50",
+                "spark.dynamicAllocation.maxExecutors": "250",
+                "spark.network.timeout": "800s",
+                "spark.executor.heartbeatInterval": "60s"
+            }
+        },
+        {
+            "Classification": "iceberg-defaults",
+            "Properties": {
+                "iceberg.enabled": "true"
+            }
+        }
+    ],
+    "ServiceRole": "EMR_DefaultRole",
+    "JobFlowRole": "EMR_EC2_DefaultRole",
+    "Tags": [
+        {"Key": "Project", "Value": "DPD-Localization"},
+        {"Key": "Environment", "Value": "Production"},
+        {"Key": "Pipeline", "Value": "Summary-v9.1"}
+    ]
+}

@@ -348,7 +348,7 @@ def generate_dpd_grid(spark, start_month, end_month, is_initial, config):
                 
                 result = result.withColumn(
                     grid_col,
-                    F.concate_ws(
+                    F.concat_ws(
                         seperator_value,
                         F.transform(
                             f"{grid_mapper_column}_history", 

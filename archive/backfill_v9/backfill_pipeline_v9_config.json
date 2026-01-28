@@ -1,0 +1,87 @@
+{
+  "pipeline_name": "Backfill Pipeline V9",
+  "version": "9.0.0",
+  
+  "tables": {
+    "accounts_table": "spark_catalog.edf_gold.ivaps_consumer_accounts_all",
+    "latest_summary_table": "primary_catalog.edf_gold.latest_summary",
+    "summary_table": "primary_catalog.edf_gold.summary",
+    "output_table": "primary_catalog.edf_gold.summary_backfilled"
+  },
+  
+  "date_filters": {
+    "base_ts_start_date": "2025-01-15",
+    "min_rpt_as_of_mo": "2026-01",
+    "exclude_month": null,
+    "comment": "Set exclude_month to a value like '2025-12' to exclude specific months"
+  },
+  
+  "performance": {
+    "cache_level": "MEMORY_AND_DISK",
+    "broadcast_threshold_rows": 10000000,
+    "max_month_diff": 36,
+    "comment": "cache_level options: MEMORY_ONLY, MEMORY_AND_DISK, DISK_ONLY"
+  },
+  
+  "history_arrays": [
+    {
+      "array_name": "payment_history_grid",
+      "source_column": "payment_history_grid",
+      "description": "Grid representation of payment history"
+    },
+    {
+      "array_name": "asset_class_cd_4in_history",
+      "source_column": "asset_class_cd_4in",
+      "description": "Asset class code history"
+    },
+    {
+      "array_name": "days_past_due_history",
+      "source_column": "days_past_due_cd",
+      "description": "Days past due history"
+    },
+    {
+      "array_name": "payment_rating_cd_history",
+      "source_column": "payment_rating_cd",
+      "description": "Payment rating code history"
+    },
+    {
+      "array_name": "past_due_am_history",
+      "source_column": "past_due_am",
+      "description": "Past due amount history"
+    },
+    {
+      "array_name": "credit_limit_am_history",
+      "source_column": "acct_credit_ext_am",
+      "description": "Credit limit amount history"
+    },
+    {
+      "array_name": "balance_am_history",
+      "source_column": "acct_high_credit_am",
+      "description": "Balance amount history"
+    },
+    {
+      "array_name": "actual_payment_am_history",
+      "source_column": "actual_payment_am",
+      "description": "Actual payment amount history"
+    }
+  ],
+  
+  "data_quality": {
+    "min_expected_records": 1,
+    "validate_array_lengths": true,
+    "check_null_keys": true,
+    "array_length": 36
+  },
+  
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  },
+  
+  "output": {
+    "write_mode": "overwrite",
+    "format": "iceberg",
+    "partition_by": null,
+    "comment": "write_mode options: overwrite, append"
+  }
+}

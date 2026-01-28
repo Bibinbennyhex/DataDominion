@@ -1,0 +1,13 @@
+# requirements.txt for Iceberg History Backfill System
+
+# Core dependencies
+pyspark>=3.3.0
+pyarrow>=10.0.0
+
+# Optional but recommended
+pandas>=1.5.0
+
+# For development
+pytest>=7.0.0
+black>=22.0.0
+pylint>=2.15.0

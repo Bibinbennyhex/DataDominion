@@ -1,0 +1,320 @@
+{
+    "environment": "production",
+    "version": "9.1-fixed",
+    "description": "Summary Pipeline v9 Fixed - Full production configuration with all columns",
+    
+    "catalog": {
+        "name": "ascend_iceberg",
+        "type": "glue",
+        "warehouse": "s3://in-cs-ivaps-data-bucket-prod-ap-south-1/ivaps_prod/persistent/ascend_summary/summary_complete/",
+        "io_impl": "org.apache.iceberg.aws.s3.S3FileIO"
+    },
+    
+    "tables": {
+        "source": "spark_catalog.edf_gold.ivaps_consumer_accounts_all",
+        "summary": "ascend_iceberg.ascenddb.summary",
+        "latest_summary": "ascend_iceberg.ascenddb.latest_summary"
+    },
+    
+    "keys": {
+        "primary": "cons_acct_key",
+        "partition": "rpt_as_of_mo",
+        "timestamp": "base_ts",
+        "primary_date": "acct_dt"
+    },
+    
+    "history": {
+        "length": 36
+    },
+    
+    "columns": {
+        "cons_acct_key": "cons_acct_key",
+        "bureau_mbr_id": "bureau_member_id",
+        "port_type_cd": "portfolio_rating_type_cd",
+        "acct_type_dtl_cd": "acct_type_dtl_cd",
+        "acct_open_dt": "open_dt",
+        "acct_closed_dt": "closed_dt",
+        "pymt_terms_cd": "pymt_terms_cd",
+        "pymt_terms_dtl_cd": "pymt_terms_dtl_cd",
+        "acct_dt": "acct_dt",
+        "acct_stat_cd": "acct_stat_cd",
+        "acct_pymt_stat_cd": "acct_pymt_stat_cd",
+        "acct_pymt_stat_dtl_cd": "acct_pymt_stat_dtl_cd",
+        "acct_credit_ext_am": "credit_limit_am",
+        "acct_bal_am": "balance_am",
+        "past_due_am": "past_due_am",
+        "actual_pymt_am": "actual_payment_am",
+        "last_pymt_dt": "last_payment_dt",
+        "schd_pymt_dt": "schd_pymt_dt",
+        "next_schd_pymt_am": "emi_amt",
+        "collateral_cd": "collateral_cd",
+        "orig_pymt_due_dt": "orig_pymt_due_dt",
+        "write_off_dt": "dflt_status_dt",
+        "write_off_am": "write_off_am",
+        "asset_class_cd_4in": "asset_class_cd",
+        "days_past_due_ct_4in": "days_past_due",
+        "high_credit_am_4in": "hi_credit_am",
+        "cash_limit_am_4in": "cash_limit_am",
+        "collateral_am_4in": "collateral_am",
+        "total_write_off_am_4in": "charge_off_am",
+        "principal_write_off_am_4in": "principal_write_off_am",
+        "settled_am_4in": "settled_am",
+        "interest_rate_4in": "interest_rate",
+        "suit_filed_wilful_def_stat_cd_4in": "suit_filed_willful_dflt",
+        "wo_settled_stat_cd_4in": "written_off_and_settled_status",
+        "base_ts": "base_ts",
+        "rpt_as_of_mo": "rpt_as_of_mo"
+    },
+    
+    "column_transformations": [
+        {
+            "name": "acct_type_dtl_cd",
+            "expr": "CASE WHEN acct_type_dtl_cd = '' OR acct_type_dtl_cd IS NULL THEN 999 ELSE acct_type_dtl_cd END"
+        },
+        {
+            "name": "charge_off_am",
+            "expr": "CASE WHEN charge_off_am IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE charge_off_am END"
+        },
+        {
+            "name": "credit_limit_am",
+            "expr": "CASE WHEN credit_limit_am IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE credit_limit_am END"
+        },
+        {
+            "name": "emi_amt",
+            "expr": "CASE WHEN emi_amt IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE emi_amt END"
+        },
+        {
+            "name": "balance_am",
+            "expr": "CASE WHEN balance_am IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE balance_am END"
+        },
+        {
+            "name": "actual_payment_am",
+            "expr": "CASE WHEN actual_payment_am IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE actual_payment_am END"
+        },
+        {
+            "name": "past_due_am",
+            "expr": "CASE WHEN past_due_am IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE past_due_am END"
+        },
+        {
+            "name": "hi_credit_am",
+            "expr": "CASE WHEN hi_credit_am IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE hi_credit_am END"
+        },
+        {
+            "name": "cash_limit_am",
+            "expr": "CASE WHEN cash_limit_am IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE cash_limit_am END"
+        },
+        {
+            "name": "collateral_am",
+            "expr": "CASE WHEN collateral_am IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE collateral_am END"
+        },
+        {
+            "name": "principal_write_off_am",
+            "expr": "CASE WHEN principal_write_off_am IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE principal_write_off_am END"
+        },
+        {
+            "name": "settled_am",
+            "expr": "CASE WHEN settled_am IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE settled_am END"
+        },
+        {
+            "name": "write_off_am",
+            "expr": "CASE WHEN write_off_am IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE write_off_am END"
+        }
+    ],
+    
+    "inferred_columns": [
+        {
+            "name": "orig_loan_am",
+            "expr": "CASE WHEN acct_type_dtl_cd IN ('5', '214', '220', '213', '224') THEN hi_credit_am ELSE credit_limit_am END"
+        },
+        {
+            "name": "payment_rating_cd",
+            "expr": "CASE WHEN days_past_due <= -1 THEN CASE WHEN asset_class_cd IN ('1', '01', 'S') THEN 'S' WHEN asset_class_cd IN ('2', '02', 'B') THEN 'B' WHEN asset_class_cd IN ('3', '03', 'D') THEN 'D' WHEN asset_class_cd IN ('4', '04', 'D') THEN 'L' WHEN asset_class_cd IN ('5', '05', 'M') THEN 'M' WHEN asset_class_cd IN ('0', '1', '2', '3', '4', '5', '6', 'G', 'L', 'C') THEN asset_class_cd ELSE NULL END WHEN days_past_due >= 0 THEN CASE WHEN days_past_due >= 0 AND days_past_due <= 29 THEN '0' WHEN days_past_due >= 30 AND days_past_due <= 59 THEN '1' WHEN days_past_due >= 60 AND days_past_due <= 89 THEN '2' WHEN days_past_due >= 90 AND days_past_due <= 119 THEN '3' WHEN days_past_due >= 120 AND days_past_due <= 149 THEN '4' WHEN days_past_due >= 150 AND days_past_due <= 179 THEN '5' WHEN days_past_due >= 180 THEN '6' ELSE NULL END END"
+        }
+    ],
+    
+    "date_columns": [
+        "open_dt",
+        "closed_dt",
+        "acct_dt",
+        "last_payment_dt",
+        "schd_pymt_dt",
+        "orig_pymt_due_dt",
+        "dflt_status_dt"
+    ],
+    
+    "coalesce_exclusion_columns": [
+        "acct_dt",
+        "rpt_as_of_mo"
+    ],
+    
+    "rolling_columns": [
+        {
+            "name": "actual_payment_am",
+            "source_column": "actual_payment_am",
+            "mapper_expr": "CASE WHEN actual_payment_am IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE actual_payment_am END",
+            "data_type": "Integer",
+            "num_cols": 36
+        },
+        {
+            "name": "balance_am",
+            "source_column": "balance_am",
+            "mapper_expr": "CASE WHEN balance_am IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE balance_am END",
+            "data_type": "Integer",
+            "num_cols": 36
+        },
+        {
+            "name": "credit_limit_am",
+            "source_column": "credit_limit_am",
+            "mapper_expr": "credit_limit_am",
+            "data_type": "Integer",
+            "num_cols": 36
+        },
+        {
+            "name": "past_due_am",
+            "source_column": "past_due_am",
+            "mapper_expr": "CASE WHEN past_due_am IN (-2147483647, -214748364, -21474836, -1) THEN NULL ELSE past_due_am END",
+            "data_type": "Integer",
+            "num_cols": 36
+        },
+        {
+            "name": "payment_rating_cd",
+            "source_column": "payment_rating_cd",
+            "mapper_expr": "payment_rating_cd",
+            "data_type": "String",
+            "num_cols": 36
+        },
+        {
+            "name": "days_past_due",
+            "source_column": "days_past_due",
+            "mapper_expr": "days_past_due",
+            "data_type": "Integer",
+            "num_cols": 36
+        },
+        {
+            "name": "asset_class_cd",
+            "source_column": "asset_class_cd",
+            "mapper_expr": "asset_class_cd",
+            "data_type": "String",
+            "num_cols": 36
+        }
+    ],
+    
+    "grid_columns": [
+        {
+            "name": "payment_history_grid",
+            "source_history": "payment_rating_cd_history",
+            "placeholder": "?",
+            "separator": ""
+        }
+    ],
+    
+    "latest_summary_columns": [
+        "cons_acct_key",
+        "rpt_as_of_mo",
+        "base_ts",
+        "acct_dt",
+        "bureau_member_id",
+        "portfolio_rating_type_cd",
+        "acct_type_dtl_cd",
+        "open_dt",
+        "closed_dt",
+        "pymt_terms_cd",
+        "acct_stat_cd",
+        "acct_pymt_stat_cd",
+        "balance_am",
+        "credit_limit_am",
+        "past_due_am",
+        "actual_payment_am",
+        "last_payment_dt",
+        "emi_amt",
+        "dflt_status_dt",
+        "asset_class_cd",
+        "days_past_due",
+        "charge_off_am",
+        "suit_filed_willful_dflt",
+        "written_off_and_settled_status",
+        "interest_rate",
+        "orig_loan_am",
+        "payment_history_grid",
+        "actual_payment_am_history",
+        "balance_am_history",
+        "credit_limit_am_history",
+        "past_due_am_history",
+        "payment_rating_cd_history",
+        "days_past_due_history",
+        "asset_class_cd_history"
+    ],
+    
+    "summary_columns": [
+        "cons_acct_key",
+        "rpt_as_of_mo",
+        "base_ts",
+        "acct_dt",
+        "bureau_member_id",
+        "portfolio_rating_type_cd",
+        "acct_type_dtl_cd",
+        "open_dt",
+        "closed_dt",
+        "pymt_terms_cd",
+        "pymt_terms_dtl_cd",
+        "acct_stat_cd",
+        "acct_pymt_stat_cd",
+        "acct_pymt_stat_dtl_cd",
+        "balance_am",
+        "credit_limit_am",
+        "past_due_am",
+        "actual_payment_am",
+        "last_payment_dt",
+        "schd_pymt_dt",
+        "emi_amt",
+        "collateral_cd",
+        "orig_pymt_due_dt",
+        "dflt_status_dt",
+        "write_off_am",
+        "asset_class_cd",
+        "days_past_due",
+        "hi_credit_am",
+        "cash_limit_am",
+        "collateral_am",
+        "charge_off_am",
+        "principal_write_off_am",
+        "settled_am",
+        "interest_rate",
+        "suit_filed_willful_dflt",
+        "written_off_and_settled_status",
+        "orig_loan_am",
+        "payment_rating_cd",
+        "payment_history_grid",
+        "actual_payment_am_history",
+        "balance_am_history",
+        "credit_limit_am_history",
+        "past_due_am_history",
+        "payment_rating_cd_history",
+        "days_past_due_history",
+        "asset_class_cd_history"
+    ],
+    
+    "performance": {
+        "broadcast_threshold": 10000000,
+        "target_records_per_partition": 5000000,
+        "min_partitions": 32,
+        "max_partitions": 16384,
+        "cache_level": "MEMORY_AND_DISK"
+    },
+    
+    "spark": {
+        "app_name": "SummaryPipeline_v9_fixed",
+        "adaptive_enabled": true,
+        "adaptive_coalesce": true,
+        "adaptive_skew_join": true,
+        "broadcast_timeout": 1200,
+        "auto_broadcast_threshold": "500m",
+        "dynamic_allocation": {
+            "enabled": true,
+            "min_executors": 50,
+            "max_executors": 250,
+            "initial_executors": 100
+        },
+        "shuffle_partitions": 8192
+    }
+}

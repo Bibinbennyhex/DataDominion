@@ -1,0 +1,106 @@
+{
+    "environment": "test",
+    "version": "9.1-fixed",
+    "description": "Test configuration for local Docker environment",
+    
+    "catalog": {
+        "name": "demo",
+        "type": "rest",
+        "uri": "http://rest:8181",
+        "warehouse": "s3://warehouse/"
+    },
+    
+    "tables": {
+        "source": "demo.test_db.accounts",
+        "summary": "demo.test_db.summary",
+        "latest_summary": "demo.test_db.latest_summary"
+    },
+    
+    "keys": {
+        "primary": "cons_acct_key",
+        "partition": "rpt_as_of_mo",
+        "timestamp": "base_ts"
+    },
+    
+    "history": {
+        "length": 36
+    },
+    
+    "rolling_columns": [
+        {
+            "name": "balance_am",
+            "source_column": "balance_am",
+            "mapper_expr": "balance_am",
+            "data_type": "Integer",
+            "num_cols": 36
+        },
+        {
+            "name": "actual_payment_am",
+            "source_column": "actual_payment_am",
+            "mapper_expr": "actual_payment_am",
+            "data_type": "Integer",
+            "num_cols": 36
+        },
+        {
+            "name": "credit_limit_am",
+            "source_column": "credit_limit_am",
+            "mapper_expr": "credit_limit_am",
+            "data_type": "Integer",
+            "num_cols": 36
+        },
+        {
+            "name": "past_due_am",
+            "source_column": "past_due_am",
+            "mapper_expr": "past_due_am",
+            "data_type": "Integer",
+            "num_cols": 36
+        },
+        {
+            "name": "days_past_due",
+            "source_column": "days_past_due",
+            "mapper_expr": "days_past_due",
+            "data_type": "Integer",
+            "num_cols": 36
+        },
+        {
+            "name": "payment_rating_cd",
+            "source_column": "payment_rating_cd",
+            "mapper_expr": "payment_rating_cd",
+            "data_type": "String",
+            "num_cols": 36
+        },
+        {
+            "name": "asset_class_cd",
+            "source_column": "asset_class_cd",
+            "mapper_expr": "asset_class_cd",
+            "data_type": "String",
+            "num_cols": 36
+        }
+    ],
+    
+    "grid_columns": [
+        {
+            "name": "payment_history_grid",
+            "source_history": "payment_rating_cd_history",
+            "placeholder": "?",
+            "separator": ""
+        }
+    ],
+    
+    "performance": {
+        "broadcast_threshold": 1000000,
+        "target_records_per_partition": 100000,
+        "min_partitions": 4,
+        "max_partitions": 32,
+        "cache_level": "MEMORY_AND_DISK"
+    },
+    
+    "spark": {
+        "app_name": "SummaryPipeline_v9_test",
+        "adaptive_enabled": true,
+        "adaptive_coalesce": true,
+        "adaptive_skew_join": true,
+        "broadcast_timeout": 300,
+        "shuffle_partitions": 8
+    }
+}
