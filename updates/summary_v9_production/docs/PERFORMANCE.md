@@ -1,4 +1,31 @@
-# Performance Analysis - Summary Pipeline v9.1
+# Performance Analysis - Summary Pipeline v9.3
+
+## Version Comparison
+
+| Version | Case I | Case II | Case III | Case IV | Gap Handling | Optimizations | Status |
+|---------|--------|---------|----------|---------|--------------|---------------|--------|
+| v9.0 | OK | OK | Broken | N/A | N/A | None | Deprecated |
+| v9.1 | OK | OK | Fixed | N/A | N/A | None | Deprecated |
+| v9.2 | OK | OK | Fixed | Added | Broken | None | Deprecated |
+| v9.2.1 | OK | OK | Fixed | Fixed | Fixed | None | Deprecated |
+| v9.3 | OK | OK | Fixed | Fixed | Fixed | Partition pruning, Single MERGE, Filter pushdown | **Current** |
+
+## v9.3 Optimizations
+
+### 1. Case III Partition Pruning (50-90% I/O Reduction)
+- **Problem**: v9.2 read entire 50B+ row summary table for backfill
+- **Solution**: Added partition filter based on backfill month range (±36 months)
+- **Impact**: Reads only relevant partitions instead of full table scan
+
+### 2. Single Consolidated MERGE (4x Less Write Amplification)
+- **Problem**: 4 separate MERGE operations (one per case type)
+- **Solution**: Collect all results, union, deduplicate by priority, single MERGE
+- **Impact**: 4x reduction in write I/O, better Iceberg commit efficiency
+
+### 3. Case II Filter Pushdown (Iceberg Data File Pruning)
+- **Problem**: Case II loaded entire latest_summary table, then filtered
+- **Solution**: SQL subquery pushes filter to Iceberg
+- **Impact**: Reads only data files containing affected accounts
 
 ## Workload Profile
 
@@ -9,43 +36,68 @@
 | Backfill Input | 200M | ~40 GB |
 | Forward Input | 750M | ~150 GB |
 | New Accounts | 50M | ~10 GB |
+| Bulk Historical | 100M | ~20 GB |
 
-## Version Comparison
+## Time Estimates (50 node cluster)
 
-### Time Estimates (50 node cluster)
+| Phase | v9.0 | v9.1 | v9.2 | v9.2.1 | v9.3 |
+|-------|------|------|------|--------|------|
+| Classification | 5 min | 5 min | 5 min | 5 min | 5 min |
+| Case I (50M new) | 10 min | 10 min | 10 min | 10 min | 10 min |
+| Case II (750M forward) | 30 min | 30 min | 30 min | 30 min | 25 min |
+| Case III (200M backfill) | ~65 min (buggy) | 75 min | 75 min | 75 min | **40-50 min** |
+| Case IV (100M bulk) | N/A | N/A | 40 min | 45 min | 45 min |
+| Write Results | 15 min | 15 min | 15 min | 15 min | **10 min** |
+| **TOTAL** | **~2 hrs** | **~2.3 hrs** | **~2.9 hrs** | **~3 hrs** | **~2.5 hrs** |
 
-| Phase | v4/v5 | v8 | v9 (bug) | v9.1 Fixed |
-|-------|-------|----|----|------------|
-| Classification | 5 min | 5 min | 5 min | 5 min |
-| Case III (200M backfill) | 160 min | 145 min | 65 min | 75 min |
-| Case I (50M new) | 10 min | 10 min | 10 min | 10 min |
-| Case II (750M forward) | 45 min | 40 min | 30 min | 30 min |
-| **TOTAL** | **~4 hrs** | **~3.7 hrs** | **~1.8 hrs** | **~2 hrs** |
+### v9.3 Performance Gains
 
-### Why v9.1 is Faster than v4/v5/v8
+| Optimization | Time Saved | Mechanism |
+|--------------|------------|-----------|
+| Case III partition pruning | 25-35 min | 50-90% less I/O |
+| Single MERGE | 5-8 min | 4x less write amplification |
+| Case II filter pushdown | 3-5 min | Iceberg data file pruning |
+| **Total** | **30-50 min** | **~30% faster** |
 
-1. **No COLLECT_LIST + EXPLODE**: Old versions collected all months into memory per account
-2. **Simple transform()**: Uses `transform(array, (x,i) -> IF(i=pos, new, x))` instead of rebuilding
-3. **Fewer table scans**: 3 scans vs 4+ scans
-4. **Better broadcast usage**: Configurable threshold (10M rows)
+## Case IV Performance Details
 
-### Case III Backfill - Algorithm Comparison
+### Algorithm Complexity
 
-| Approach | v4/v5/v8 | v9.1 Fixed |
-|----------|----------|------------|
-| Method | 7-CTE SQL with COLLECT_LIST | 3-part (new rows + updates + union) |
-| Memory | High (collect all months) | Low (join only) |
-| Table Scans | 4+ | 3 |
-| Complexity | O(accounts × months × 36) | O(records × 36) |
+| Step | Operation | Complexity |
+|------|-----------|------------|
+| 1. Build MAPs | GROUP BY account, COLLECT_LIST per column | O(accounts × columns) |
+| 2. Join MAPs | Records JOIN Maps | O(records) |
+| 3. Build Arrays | TRANSFORM per column | O(records × columns × 36) |
+
+### Memory Usage
+
+| Component | Memory | Notes |
+|-----------|--------|-------|
+| Account MAPs | ~5GB per 1M accounts | 36-month × 7 columns × avg 20 bytes |
+| Broadcast threshold | 500MB | MAPs broadcast if under threshold |
+| Executor overhead | ~20% | For MAP lookups |
+
+### Benchmarks (Docker Local - v9.3)
+
+| Scale | Records | Total Pipeline Time | Throughput |
+|-------|---------|---------------------|------------|
+| TINY | ~160 | 4.67 min | 0.6/s |
+| SMALL | ~5K | ~8 min | ~10/s |
+| MEDIUM | ~100K | ~20 min | ~80/s |
+
+Note: Local Docker benchmarks include Spark startup overhead (~2 min).
+Expect 10-50x improvement on production cluster due to parallelism.
 
 ## Memory Requirements
 
 | Phase | Peak Memory | Risk |
 |-------|-------------|------|
-| Classification | ~200 GB (broadcast latest_summary meta) | Low |
-| Case III v4/v5/v8 | ~500+ GB (COLLECT_LIST) | **HIGH OOM** |
-| Case III v9.1 | ~150 GB (joins only) | Low |
+| Classification | ~200 GB | Low |
+| Case I | ~100 GB | Low |
 | Case II | ~375 GB | Medium |
+| Case III | ~150 GB | Low |
+| Case IV (COLLECT_LIST) | ~300 GB | Medium |
+| Case IV (MAP approach) | ~400 GB | Medium |
 
 ## Cluster Sizing Guide
 
@@ -56,13 +108,13 @@
 
 ### Standard (Production)
 - 20 core (On-Demand) + 30 task (Spot) r6i.8xlarge
-- Runtime: ~2 hours
-- Cost: ~$130/run
+- Runtime: ~3 hours
+- Cost: ~$150/run
 
 ### Fast (SLA Critical)
 - 40 × r6i.12xlarge (On-Demand)
-- Runtime: ~1.5 hours
-- Cost: ~$180/run
+- Runtime: ~2 hours
+- Cost: ~$200/run
 
 ## Key Configuration Values
 
@@ -74,6 +126,14 @@
 | `cache_level` | MEMORY_AND_DISK | Prevents OOM |
 | `dynamicAllocation.maxExecutors` | 250 | Scale up for large batches |
 
+## Case IV Specific Settings
+
+| Setting | Value | Reason |
+|---------|-------|--------|
+| `spark.sql.shuffle.partitions` | 8192 | High for MAP operations |
+| `spark.sql.adaptive.enabled` | true | Auto-optimize shuffle |
+| `spark.sql.adaptive.coalescePartitions.enabled` | true | Reduce small partitions |
+
 ## I/O Throughput
 
 | Resource | Capacity | Time to Read 10TB |
@@ -83,9 +143,10 @@
 
 ## Bottleneck Analysis
 
-1. **Case III Backfill**: Most expensive due to summary table scan
-2. **Shuffle**: 8192 partitions with 50B record table
-3. **MERGE write**: Iceberg merge-on-read overhead
+1. **Case IV MAP Building**: GROUP BY with COLLECT_LIST for each account
+2. **Case III Backfill**: Summary table scan for affected months
+3. **Shuffle**: 8192 partitions with 50B record table
+4. **MERGE Write**: Iceberg merge-on-read overhead
 
 ## Optimization Opportunities
 
@@ -93,3 +154,48 @@
 2. **Pre-aggregate backfill**: Group multiple backfills before processing
 3. **Increase broadcast threshold**: If memory allows, broadcast more
 4. **Use Iceberg bucketing**: On `cons_acct_key` for faster joins
+5. **Batch bulk historical**: Process large bulk loads in separate runs
+
+## Running Performance Benchmarks
+
+```bash
+# Tiny scale (quick test)
+docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test_performance_benchmark.py --scale TINY
+
+# Small scale (development)
+docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test_performance_benchmark.py --scale SMALL
+
+# Medium scale (integration)
+docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test_performance_benchmark.py --scale MEDIUM
+
+# Large scale (stress test)
+docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test_performance_benchmark.py --scale LARGE
+```
+
+## Expected Benchmark Output
+
+```
+================================================================================
+PERFORMANCE BENCHMARK RESULTS
+================================================================================
+Phase                          Time (s)     Records      Throughput     
+--------------------------------------------------------------------------------
+Data Generation                    12.34s      5,000        405.2/s
+Classification                      1.23s      5,000      4,065.0/s
+Case I (New)                        2.15s        500        232.6/s
+Case II (Forward)                   1.89s        250        132.3/s
+Case III (Backfill)                 2.45s        150         61.2/s
+Case IV (Bulk)                      4.67s      4,100        878.0/s
+Write Results                       3.21s      5,000      1,557.6/s
+--------------------------------------------------------------------------------
+TOTAL (processing)                 15.60s      5,000        320.5/s
+
+PRODUCTION EXTRAPOLATION (single node)
+----------------------------------------
+  50M new accounts: ~2,604.2 minutes
+  200M backfill: ~10,416.7 minutes
+  ...
+```
+
+Note: Production extrapolation is linear from single-node benchmarks. 
+Actual cluster performance scales near-linearly with node count.
