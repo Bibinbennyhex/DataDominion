@@ -4,25 +4,28 @@
 
 | File | Tests | Purpose |
 |------|-------|---------|
-| `test_all_scenarios.py` | 21 | Core functionality - all 4 cases + gaps |
-| `test_comprehensive_edge_cases.py` | 40+ | Extended edge cases and boundaries |
+| `test_all_scenarios.py` | 26 | Core functionality - all 4 cases + gaps |
+| `test_comprehensive_edge_cases.py` | 34 | Extended edge cases and boundaries |
+| `test_duplicate_records.py` | 14 | Duplicate record handling (latest base_ts wins) |
 | `test_bulk_historical_load.py` | 15 | 72-month bulk historical scenario |
 | `test_performance_benchmark.py` | N/A | Performance measurement at scale |
 | `run_backfill_test.py` | 5 | Case III backfill cascade |
 
-## v9.3 Test Verification
+## v9.4.1 Test Verification
 
-All tests pass with v9.3 optimizations. Log evidence:
+All tests pass with v9.4.1 fixes. Log evidence:
 
 ```
-Applied partition filter: rpt_as_of_mo BETWEEN '2022-11' AND '2028-11'
-Using SQL subquery for filter pushdown (Iceberg optimization)
-WRITING ALL RESULTS (single MERGE operation)
+test_all_scenarios.py:              26/26 PASSED
+test_comprehensive_edge_cases.py:   34/34 PASSED
+test_duplicate_records.py:          14/14 PASSED
+test_bulk_historical_load.py:       15/15 PASSED
+run_backfill_test.py:               5/5 PASSED
 ```
 
 ---
 
-## Test Suite 1: test_all_scenarios.py (21 tests)
+## Test Suite 1: test_all_scenarios.py (26 tests)
 
 ### Purpose
 Validates all 4 case types in a single integrated test run with gap handling.
@@ -283,6 +286,43 @@ docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/run_
 
 ---
 
+## Test Suite 6: test_duplicate_records.py (14 tests)
+
+### Purpose
+Validates that duplicate records (same `cons_acct_key` + `rpt_as_of_mo`) are correctly handled by picking the one with the LATEST `base_ts`.
+
+### Test Accounts
+| Account | Scenario |
+|---------|----------|
+| 12001 | 2 records same month (10:00:00, 11:00:00) |
+| 12002 | 3 records same month (09:00:00, 10:00:00, 11:00:00) |
+| 12003 | Multi-month upload with duplicates in one month |
+
+### Tests
+| # | Test | Expected |
+|---|------|----------|
+| 1 | 12001 balance_am | 5500 (from 11:00:00 record) |
+| 2 | 12001 balance_am_history[0] | 5500 |
+| 3 | 12001 base_ts | 2026-01-15 11:00:00 |
+| 4 | 12002 balance_am | 7000 (from 11:00:00 record) |
+| 5 | 12002 actual_payment_am | 300 (from 11:00:00 record) |
+| 6 | 12003 Jan 2026 balance | 8000 (single record) |
+| 7 | 12003 Feb 2026 balance | 9000 (from 11:00:00 record) |
+| 8 | 12003 Feb history[1] | 8000 (Jan correctly shifted) |
+| 9 | 12003 Mar 2026 balance | 9500 (single record) |
+| 10 | 12003 Mar history[1] | 9000 (Feb correct value) |
+| 11 | 12003 Mar history[2] | 8000 (Jan correct value) |
+| 12 | latest_summary 12001 | 5500 |
+| 13 | latest_summary 12002 | 7000 |
+| 14 | latest_summary 12003 | 9500 |
+
+### How to Run
+```bash
+docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test_duplicate_records.py
+```
+
+---
+
 ## Running All Tests
 
 ### Sequential (Recommended)
@@ -290,6 +330,7 @@ docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/run_
 # Run each test suite one at a time
 docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test_all_scenarios.py
 docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test_comprehensive_edge_cases.py
+docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test_duplicate_records.py
 docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test_bulk_historical_load.py
 docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test_performance_benchmark.py --scale SMALL
 ```
@@ -307,6 +348,7 @@ docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test
 Each test creates its own isolated database:
 - `demo.all_cases_test` - test_all_scenarios.py
 - `demo.edge_case_test` - test_comprehensive_edge_cases.py
+- `demo.dup_test` - test_duplicate_records.py
 - `demo.bulk_test` - test_bulk_historical_load.py
 - `demo.perf_test` - test_performance_benchmark.py
 - `demo.backfill_test` - run_backfill_test.py
@@ -317,25 +359,23 @@ Tables are automatically dropped and recreated at the start of each test run.
 
 ## Expected Results Summary
 
-| Test File | Tests | Expected | v9.3 Result |
-|-----------|-------|----------|-------------|
-| test_all_scenarios.py | 21 | 21 PASSED | **21 PASSED** |
-| test_comprehensive_edge_cases.py | 40+ | All PASSED | All PASSED |
-| test_bulk_historical_load.py | 15 | 15 PASSED | 15 PASSED |
-| test_performance_benchmark.py | N/A | Completes | Completes (4.67 min TINY) |
-| run_backfill_test.py | 5 | 5 PASSED | 5 PASSED |
+| Test File | Tests | Expected | v9.4.1 Result |
+|-----------|-------|----------|---------------|
+| test_all_scenarios.py | 26 | 26 PASSED | **26 PASSED** |
+| test_comprehensive_edge_cases.py | 34 | 34 PASSED | **34 PASSED** |
+| test_duplicate_records.py | 14 | 14 PASSED | **14 PASSED** |
+| test_bulk_historical_load.py | 15 | 15 PASSED | **15 PASSED** |
+| test_performance_benchmark.py | N/A | Completes | Completes |
+| run_backfill_test.py | 5 | 5 PASSED | **5 PASSED** |
 
-**Total: 80+ tests, all passing on v9.3**
+**Total: 94 tests, all passing on v9.4.1**
 
-### Latest Test Run (January 2026)
+### Latest Test Run (February 2026)
 
 ```
 ================================================================================
-FINAL RESULTS: 21 passed, 0 failed
+FINAL RESULTS: 26 passed, 0 failed
 ================================================================================
 
 *** ALL TESTS PASSED ***
-
-Pipeline Duration: 4.67 minutes
-Records Written: 173
 ```

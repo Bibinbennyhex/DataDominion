@@ -1,5 +1,5 @@
 """
-COMPREHENSIVE EDGE CASE TEST SUITE - Summary Pipeline v9.2.1
+COMPREHENSIVE EDGE CASE TEST SUITE - Summary Pipeline v9.4
 =============================================================
 
 Tests ALL edge cases for the summary pipeline including:
@@ -78,6 +78,9 @@ def setup_tables(spark):
     
     spark.sql("CREATE DATABASE IF NOT EXISTS demo.edge_case_test")
     
+    # Create temp schema for temp tables (v9.4)
+    spark.sql("CREATE DATABASE IF NOT EXISTS demo.temp")
+    
     # Drop existing tables
     spark.sql("DROP TABLE IF EXISTS demo.edge_case_test.accounts")
     spark.sql("DROP TABLE IF EXISTS demo.edge_case_test.summary")
@@ -100,7 +103,7 @@ def setup_tables(spark):
         USING iceberg
     """)
     
-    # Create summary table
+    # Create summary table with v9.4 schema
     spark.sql("""
         CREATE TABLE demo.edge_case_test.summary (
             cons_acct_key BIGINT,
@@ -113,19 +116,20 @@ def setup_tables(spark):
             days_past_due INT,
             asset_class_cd STRING,
             payment_rating_cd STRING,
-            balance_am_history ARRAY<INT>,
             actual_payment_am_history ARRAY<INT>,
+            balance_am_history ARRAY<INT>,
             credit_limit_am_history ARRAY<INT>,
             past_due_am_history ARRAY<INT>,
-            days_past_due_history ARRAY<INT>,
-            asset_class_cd_history ARRAY<STRING>,
             payment_rating_cd_history ARRAY<STRING>,
-            payment_history_grid STRING
+            days_past_due_history ARRAY<INT>,
+            asset_class_cd_4in_history ARRAY<STRING>,
+            payment_history_grid STRING,
+            updated_base_ts TIMESTAMP
         )
         USING iceberg
     """)
     
-    # Create latest_summary table
+    # Create latest_summary table with v9.4 schema
     spark.sql("""
         CREATE TABLE demo.edge_case_test.latest_summary (
             cons_acct_key BIGINT,
@@ -138,14 +142,15 @@ def setup_tables(spark):
             days_past_due INT,
             asset_class_cd STRING,
             payment_rating_cd STRING,
-            balance_am_history ARRAY<INT>,
             actual_payment_am_history ARRAY<INT>,
+            balance_am_history ARRAY<INT>,
             credit_limit_am_history ARRAY<INT>,
             past_due_am_history ARRAY<INT>,
-            days_past_due_history ARRAY<INT>,
-            asset_class_cd_history ARRAY<STRING>,
             payment_rating_cd_history ARRAY<STRING>,
-            payment_history_grid STRING
+            days_past_due_history ARRAY<INT>,
+            asset_class_cd_4in_history ARRAY<STRING>,
+            payment_history_grid STRING,
+            updated_base_ts TIMESTAMP
         )
         USING iceberg
     """)
@@ -277,7 +282,7 @@ def verify_case_i_edge_cases(spark) -> TestResult:
     row = spark.sql("""
         SELECT balance_am_history[0] as bal_0, 
                actual_payment_am_history[0] as pay_0,
-               asset_class_cd_history[0] as ac_0
+               asset_class_cd_4in_history[0] as ac_0
         FROM demo.edge_case_test.summary WHERE cons_acct_key = 6003
     """).first()
     
@@ -313,27 +318,29 @@ def setup_case_ii_edge_cases(spark):
         INSERT INTO demo.edge_case_test.summary VALUES
         (7001, '2026-02', TIMESTAMP '2026-02-15 10:00:00',
          5000, 500, 10000, 0, 0, 'A', '0',
-         {build_int_array({0: 5000, 1: 4800})},
          {build_int_array({0: 500, 1: 480})},
+         {build_int_array({0: 5000, 1: 4800})},
          {build_int_array({0: 10000, 1: 10000})},
          {build_int_array({0: 0, 1: 0})},
+         {build_str_array({0: '0', 1: '0'})},
          {build_int_array({0: 0, 1: 0})},
          {build_str_array({0: 'A', 1: 'A'})},
-         {build_str_array({0: '0', 1: '0'})},
-         '00??????????????????????????????????')
+         '00??????????????????????????????????',
+         NULL)
     """)
     spark.sql(f"""
         INSERT INTO demo.edge_case_test.latest_summary VALUES
         (7001, '2026-02', TIMESTAMP '2026-02-15 10:00:00',
          5000, 500, 10000, 0, 0, 'A', '0',
-         {build_int_array({0: 5000, 1: 4800})},
          {build_int_array({0: 500, 1: 480})},
+         {build_int_array({0: 5000, 1: 4800})},
          {build_int_array({0: 10000, 1: 10000})},
          {build_int_array({0: 0, 1: 0})},
+         {build_str_array({0: '0', 1: '0'})},
          {build_int_array({0: 0, 1: 0})},
          {build_str_array({0: 'A', 1: 'A'})},
-         {build_str_array({0: '0', 1: '0'})},
-         '00??????????????????????????????????')
+         '00??????????????????????????????????',
+         NULL)
     """)
     
     # 7002: Has Jan 2026, will receive July 2026 (skip 5 months)
@@ -342,27 +349,29 @@ def setup_case_ii_edge_cases(spark):
         INSERT INTO demo.edge_case_test.summary VALUES
         (7002, '2026-01', TIMESTAMP '2026-01-15 10:00:00',
          8000, 800, 15000, 0, 0, 'A', '0',
-         {build_int_array({0: 8000})},
          {build_int_array({0: 800})},
+         {build_int_array({0: 8000})},
          {build_int_array({0: 15000})},
          {build_int_array({0: 0})},
+         {build_str_array({0: '0'})},
          {build_int_array({0: 0})},
          {build_str_array({0: 'A'})},
-         {build_str_array({0: '0'})},
-         '0???????????????????????????????????')
+         '0???????????????????????????????????',
+         NULL)
     """)
     spark.sql(f"""
         INSERT INTO demo.edge_case_test.latest_summary VALUES
         (7002, '2026-01', TIMESTAMP '2026-01-15 10:00:00',
          8000, 800, 15000, 0, 0, 'A', '0',
-         {build_int_array({0: 8000})},
          {build_int_array({0: 800})},
+         {build_int_array({0: 8000})},
          {build_int_array({0: 15000})},
          {build_int_array({0: 0})},
+         {build_str_array({0: '0'})},
          {build_int_array({0: 0})},
          {build_str_array({0: 'A'})},
-         {build_str_array({0: '0'})},
-         '0???????????????????????????????????')
+         '0???????????????????????????????????',
+         NULL)
     """)
 
 
@@ -478,27 +487,29 @@ def setup_case_iii_edge_cases(spark):
         INSERT INTO demo.edge_case_test.summary VALUES
         (8001, '2026-01', TIMESTAMP '2026-01-15 10:00:00',
          3000, 300, 5000, 0, 0, 'A', '0',
-         {build_int_array({0: 3000})},
          {build_int_array({0: 300})},
+         {build_int_array({0: 3000})},
          {build_int_array({0: 5000})},
          {build_int_array({0: 0})},
+         {build_str_array({0: '0'})},
          {build_int_array({0: 0})},
          {build_str_array({0: 'A'})},
-         {build_str_array({0: '0'})},
-         '0???????????????????????????????????')
+         '0???????????????????????????????????',
+         NULL)
     """)
     spark.sql(f"""
         INSERT INTO demo.edge_case_test.latest_summary VALUES
         (8001, '2026-01', TIMESTAMP '2026-01-15 10:00:00',
          3000, 300, 5000, 0, 0, 'A', '0',
-         {build_int_array({0: 3000})},
          {build_int_array({0: 300})},
+         {build_int_array({0: 3000})},
          {build_int_array({0: 5000})},
          {build_int_array({0: 0})},
+         {build_str_array({0: '0'})},
          {build_int_array({0: 0})},
          {build_str_array({0: 'A'})},
-         {build_str_array({0: '0'})},
-         '0???????????????????????????????????')
+         '0???????????????????????????????????',
+         NULL)
     """)
     
     # 8002: Has multiple months, will receive multiple backfills in one batch
@@ -507,40 +518,43 @@ def setup_case_iii_edge_cases(spark):
         INSERT INTO demo.edge_case_test.summary VALUES
         (8002, '2025-12', TIMESTAMP '2025-12-15 10:00:00',
          6000, 600, 8000, 0, 0, 'A', '0',
-         {build_int_array({0: 6000})},
          {build_int_array({0: 600})},
+         {build_int_array({0: 6000})},
          {build_int_array({0: 8000})},
          {build_int_array({0: 0})},
+         {build_str_array({0: '0'})},
          {build_int_array({0: 0})},
          {build_str_array({0: 'A'})},
-         {build_str_array({0: '0'})},
-         '0???????????????????????????????????')
+         '0???????????????????????????????????',
+         NULL)
     """)
     spark.sql(f"""
         INSERT INTO demo.edge_case_test.summary VALUES
         (8002, '2026-01', TIMESTAMP '2026-01-15 10:00:00',
          5800, 580, 8000, 0, 0, 'A', '0',
-         {build_int_array({0: 5800, 1: 6000})},
          {build_int_array({0: 580, 1: 600})},
+         {build_int_array({0: 5800, 1: 6000})},
          {build_int_array({0: 8000, 1: 8000})},
          {build_int_array({0: 0, 1: 0})},
+         {build_str_array({0: '0', 1: '0'})},
          {build_int_array({0: 0, 1: 0})},
          {build_str_array({0: 'A', 1: 'A'})},
-         {build_str_array({0: '0', 1: '0'})},
-         '00??????????????????????????????????')
+         '00??????????????????????????????????',
+         NULL)
     """)
     spark.sql(f"""
         INSERT INTO demo.edge_case_test.latest_summary VALUES
         (8002, '2026-01', TIMESTAMP '2026-01-15 10:00:00',
          5800, 580, 8000, 0, 0, 'A', '0',
-         {build_int_array({0: 5800, 1: 6000})},
          {build_int_array({0: 580, 1: 600})},
+         {build_int_array({0: 5800, 1: 6000})},
          {build_int_array({0: 8000, 1: 8000})},
          {build_int_array({0: 0, 1: 0})},
+         {build_str_array({0: '0', 1: '0'})},
          {build_int_array({0: 0, 1: 0})},
          {build_str_array({0: 'A', 1: 'A'})},
-         {build_str_array({0: '0', 1: '0'})},
-         '00??????????????????????????????????')
+         '00??????????????????????????????????',
+         NULL)
     """)
 
 
@@ -794,12 +808,12 @@ def verify_case_iv_edge_cases(spark) -> TestResult:
     
     if dec25_9002:
         # Position 35 should be Jan 2023 (36th month back from Dec 2025)
-        # 2022-01 is too old (48 months back), should be NULL or have correct value
-        # Jan 2023 = 48000 - 12*100 = 36000
-        if dec25_9002['bal_35'] == 36000:
-            result.add_pass("9002 Dec 2025 bal[35] = 36000 (Jan 2023, correctly windowed)")
+        # Data starts at Jan 2022 (i=0, bal=48000), so Jan 2023 is i=12
+        # Jan 2023 = 48000 - 12*100 = 46800
+        if dec25_9002['bal_35'] == 46800:
+            result.add_pass("9002 Dec 2025 bal[35] = 46800 (Jan 2023, correctly windowed)")
         else:
-            result.add_fail(f"9002 Dec 2025 bal[35] = {dec25_9002['bal_35']} (expected 36000)")
+            result.add_fail(f"9002 Dec 2025 bal[35] = {dec25_9002['bal_35']} (expected 46800)")
     else:
         result.add_fail("9002 Dec 2025 row missing")
     
@@ -936,44 +950,128 @@ def verify_case_iv_edge_cases(spark) -> TestResult:
 def run_pipeline(spark):
     """Run the pipeline"""
     print("\n" + "=" * 80)
-    print("RUNNING PIPELINE v9.2.1")
+    print("RUNNING PIPELINE v9.4")
     print("=" * 80)
     
     try:
-        from summary_pipeline import run_pipeline as pipeline_run, PipelineConfig
+        from summary_pipeline import run_pipeline as pipeline_run
     except ImportError as e:
         print(f"Could not import pipeline: {e}")
         return None
     
-    config = PipelineConfig()
-    config.accounts_table = "demo.edge_case_test.accounts"
-    config.summary_table = "demo.edge_case_test.summary"
-    config.latest_summary_table = "demo.edge_case_test.latest_summary"
-    config.primary_key = "cons_acct_key"
-    config.partition_key = "rpt_as_of_mo"
-    config.timestamp_key = "base_ts"
-    config.history_length = 36
-    
-    config.rolling_columns = [
-        {"name": "balance_am", "source_column": "balance_am", "mapper_expr": "balance_am", "data_type": "INT"},
-        {"name": "actual_payment_am", "source_column": "actual_payment_am", "mapper_expr": "actual_payment_am", "data_type": "INT"},
-        {"name": "credit_limit_am", "source_column": "credit_limit_am", "mapper_expr": "credit_limit_am", "data_type": "INT"},
-        {"name": "past_due_am", "source_column": "past_due_am", "mapper_expr": "past_due_am", "data_type": "INT"},
-        {"name": "days_past_due", "source_column": "days_past_due", "mapper_expr": "days_past_due", "data_type": "INT"},
-        {"name": "asset_class_cd", "source_column": "asset_class_cd", "mapper_expr": "asset_class_cd", "data_type": "STRING"},
-        {"name": "payment_rating_cd", "source_column": "payment_rating_cd", "mapper_expr": "payment_rating_cd", "data_type": "STRING"}
-    ]
-    
-    config.grid_columns = [
-        {"name": "payment_history_grid", "source_history": "payment_rating_cd_history", "placeholder": "?", "separator": ""}
-    ]
-    
-    config.column_mappings = {}
-    config.column_transformations = []
-    config.inferred_columns = []
-    config.date_columns = []
-    config.summary_columns = []
-    config.latest_summary_columns = []
+    # v9.4 dict-based config
+    config = {
+        # Table names
+        "source_table": "demo.edge_case_test.accounts",
+        "destination_table": "demo.edge_case_test.summary",
+        "latest_history_table": "demo.edge_case_test.latest_summary",
+        
+        # Temp table schema (v9.4)
+        "temp_table_schema": "temp",
+        
+        # Keys
+        "primary_column": "cons_acct_key",
+        "partition_column": "rpt_as_of_mo",
+        "max_identifier_column": "base_ts",
+        
+        # History length
+        "history_length": 36,
+        
+        # Column mappings - empty for test since we use destination names directly
+        "columns": {},
+        
+        # Column transformations - empty for test
+        "column_transformations": [],
+        
+        # Inferred columns - empty for test
+        "inferred_columns": [],
+        
+        # Date columns - empty for test
+        "date_col_list": [],
+        
+        # Latest summary addon columns
+        "latest_history_addon_cols": [],
+        
+        # Rolling columns - ALL 7 from production
+        "rolling_columns": [
+            {
+                "name": "actual_payment_am",
+                "mapper_expr": "actual_payment_am",
+                "mapper_column": "actual_payment_am",
+                "num_cols": 36,
+                "type": "Integer"
+            },
+            {
+                "name": "balance_am",
+                "mapper_expr": "balance_am",
+                "mapper_column": "balance_am",
+                "num_cols": 36,
+                "type": "Integer"
+            },
+            {
+                "name": "credit_limit_am",
+                "mapper_expr": "credit_limit_am",
+                "mapper_column": "credit_limit_am",
+                "num_cols": 36,
+                "type": "Integer"
+            },
+            {
+                "name": "past_due_am",
+                "mapper_expr": "past_due_am",
+                "mapper_column": "past_due_am",
+                "num_cols": 36,
+                "type": "Integer"
+            },
+            {
+                "name": "payment_rating_cd",
+                "mapper_expr": "payment_rating_cd",
+                "mapper_column": "payment_rating_cd",
+                "num_cols": 36,
+                "type": "String"
+            },
+            {
+                "name": "days_past_due",
+                "mapper_expr": "days_past_due",
+                "mapper_column": "days_past_due",
+                "num_cols": 36,
+                "type": "Integer"
+            },
+            {
+                "name": "asset_class_cd_4in",
+                "mapper_expr": "asset_class_cd",
+                "mapper_column": "asset_class_cd",
+                "num_cols": 36,
+                "type": "String"
+            }
+        ],
+        
+        # Grid columns
+        "grid_columns": [
+            {
+                "name": "payment_history_grid",
+                "mapper_rolling_column": "payment_rating_cd",
+                "placeholder": "?",
+                "seperator": ""
+            }
+        ],
+        
+        # Performance settings
+        "performance": {
+            "broadcast_threshold": 10000000,
+            "min_partitions": 4,
+            "max_partitions": 32,
+            "cache_level": "MEMORY_AND_DISK"
+        },
+        
+        # Spark settings
+        "spark": {
+            "app_name": "SummaryPipeline_v9.4_edge_case_test",
+            "adaptive_enabled": True,
+            "adaptive_coalesce": True,
+            "adaptive_skew_join": True,
+            "broadcast_timeout": 300
+        }
+    }
     
     start_time = time.time()
     try:
@@ -1003,7 +1101,7 @@ def run_pipeline(spark):
 
 def main():
     print("=" * 80)
-    print("COMPREHENSIVE EDGE CASE TEST SUITE - v9.2.1")
+    print("COMPREHENSIVE EDGE CASE TEST SUITE - v9.4")
     print("=" * 80)
     print(f"Start time: {datetime.now()}")
     

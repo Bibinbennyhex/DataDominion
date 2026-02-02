@@ -1,19 +1,36 @@
-# Summary Pipeline v9.3 Production
+# Summary Pipeline v9.4 Production
 
-Production-ready DPD Summary Pipeline with full support for all 4 case types, gap handling, and optimized I/O.
+Production-ready DPD Summary Pipeline with full support for all 4 case types, gap handling, temp table processing, and optimized I/O.
 
 ## Version
 
-**v9.3** (January 2026)
+**v9.4.1** (February 2026)
 
-## What's New in v9.3
+## What's New in v9.4.1
 
-### Performance Optimizations
-- **Partition Pruning**: Case III reads only necessary partitions (50-90% I/O reduction)
-- **Single MERGE**: Consolidated writes instead of 4 separate MERGEs (4x less write amplification)
-- **Filter Pushdown**: Case II uses SQL subquery for Iceberg data file pruning
+### Critical Fixes
+- **Multiple Backfill Merge**: Fixed issue where multiple backfills for the same account in the same batch were not all propagated to future months. Now uses `collect_list` + `aggregate` to merge all backfills correctly.
+- **Type-Aware Aggregation**: Fixed SQL generation for STRING columns in backfill processing.
+
+### New Tests
+- **Duplicate Record Handling**: Added `test_duplicate_records.py` to verify that latest `base_ts` wins when duplicates exist.
+
+## What's New in v9.4
+
+### Temp Table Processing Architecture
+- **Temp Table Approach**: Each case writes to temporary Iceberg table, breaking DAG lineage
+- **Unique Batch ID**: Format `{schema}.pipeline_batch_{timestamp}_{uuid}` prevents collisions
+- **Auto Cleanup**: `try/finally` ensures temp table dropped on success/failure
+- **Orphan Cleanup**: `cleanup_orphaned_temp_tables()` for crashed runs
+- **Legacy Mode**: `--legacy` flag for v9.3-style in-memory union
+
+### Benefits
+- Significantly reduced driver memory pressure
+- Improved reliability for large batches (1B+ records)
+- No more driver OOM errors
 
 ### Previous Versions
+- **v9.3**: Partition pruning, single MERGE, filter pushdown (50-90% I/O reduction)
 - **v9.2.1**: Fixed Case IV gap handling (MAP+TRANSFORM approach)
 - **v9.2**: Added Case IV for bulk historical loads
 - **v9.1**: Fixed Case III backfill row creation
@@ -34,6 +51,8 @@ Production-ready DPD Summary Pipeline with full support for all 4 case types, ga
 | v9.1 | Case III didn't create row for backfill month itself |
 | v9.2 | Case IV not handled (all bulk records were Case I) |
 | v9.2.1 | Case IV gaps not preserved (COLLECT_LIST skipped gaps) |
+| v9.4.1 | Multiple backfills in same batch not fully propagated |
+| v9.4.1 | Type mismatch for STRING columns in backfill aggregation |
 
 ## Folder Structure
 
@@ -41,14 +60,16 @@ Production-ready DPD Summary Pipeline with full support for all 4 case types, ga
 summary_v9_production/
 ├── README.md                           # This file
 ├── pipeline/
-│   └── summary_pipeline.py             # Main pipeline code (~1300 lines)
+│   └── summary_pipeline.py             # v9.4.1 - Temp table optimized (~1500 lines)
 ├── config/
 │   └── pipeline_config.json            # Full production configuration
 ├── tests/
 │   ├── run_backfill_test.py            # Case III backfill test
 │   ├── test_bulk_historical_load.py    # Case IV 72-month test
-│   ├── test_all_scenarios.py           # All 4 cases + gaps (21 tests)
-│   ├── test_comprehensive_edge_cases.py # Extended edge cases (40+ tests)
+│   ├── test_all_scenarios.py           # All 4 cases + gaps (25 tests)
+│   ├── test_comprehensive_50_cases.py  # Extended scenarios (52 tests)
+│   ├── test_comprehensive_edge_cases.py # Extended edge cases (34 tests)
+│   ├── test_duplicate_records.py       # Duplicate handling (14 tests)
 │   ├── test_performance_benchmark.py   # Performance benchmarking
 │   └── test_config.json                # Test configuration
 ├── deployment/
@@ -57,6 +78,7 @@ summary_v9_production/
 │   ├── spark_defaults.conf             # Spark configuration
 │   └── bootstrap.sh                    # EMR bootstrap script
 └── docs/
+    ├── DESIGN_DOCUMENT.md              # Technical design (v9.4)
     ├── PERFORMANCE.md                  # Performance analysis
     ├── CHANGELOG.md                    # Version history
     ├── CASE_IV_BULK_HISTORICAL_LOAD.md # Case IV documentation
@@ -65,7 +87,7 @@ summary_v9_production/
 
 ## Quick Start
 
-### 1. Run on EMR
+### 1. Run on EMR (Default - Temp Table)
 
 ```bash
 spark-submit \
@@ -77,7 +99,31 @@ spark-submit \
   --mode incremental
 ```
 
-### 2. Run Locally (Docker)
+### 2. Run on EMR (Legacy - In-Memory Union)
+
+```bash
+spark-submit \
+  --master yarn \
+  --deploy-mode cluster \
+  pipeline/summary_pipeline.py \
+  --config config/pipeline_config.json \
+  --mode incremental \
+  --legacy
+```
+
+### 3. Cleanup Orphaned Temp Tables
+
+```bash
+spark-submit \
+  --master yarn \
+  --deploy-mode client \
+  pipeline/summary_pipeline.py \
+  --config config/pipeline_config.json \
+  --cleanup-orphans \
+  --max-age-hours 24
+```
+
+### 4. Run Locally (Docker)
 
 ```bash
 # Copy files to container
@@ -87,11 +133,14 @@ cat pipeline/summary_pipeline.py | docker exec -i spark-iceberg tee /home/iceber
 docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test_all_scenarios.py
 ```
 
-### 3. Run Tests
+### 5. Run Tests
 
 ```bash
-# All scenarios (21 tests)
+# All scenarios (25 tests)
 docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test_all_scenarios.py
+
+# Extended 52-test suite
+docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test_comprehensive_50_cases.py
 
 # Edge cases (40+ tests)
 docker exec spark-iceberg python3 /home/iceberg/summary_v9_production/tests/test_comprehensive_edge_cases.py
@@ -181,16 +230,25 @@ See `config/pipeline_config.json` for full configuration including:
 - Performance tuning
 - Spark settings
 
-## Test Results (v9.3 - All Pass)
+## Test Results (v9.4 - All Pass)
 
 ```
-test_all_scenarios.py:              21/21 PASSED
+test_all_scenarios.py:              25/25 PASSED
+test_comprehensive_50_cases.py:     52/52 PASSED
 test_comprehensive_edge_cases.py:   40+/40+ PASSED
 test_bulk_historical_load.py:       15/15 PASSED
 test_performance_benchmark.py:      Completes successfully at all scales
 ```
 
-### v9.3 Optimization Verification
+### v9.4 Temp Table Verification
+
+Log evidence from test runs:
+- `Created temp table: demo.temp.pipeline_batch_20260131_143052_a1b2c3d4` (Temp table created)
+- `Wrote 500 Case I records to temp table` (Case I materialized)
+- `Wrote 250 Case II records to temp table` (Case II materialized)
+- `Dropped temp table: demo.temp.pipeline_batch_...` (Cleanup successful)
+
+### v9.3 Optimization Verification (Retained)
 
 Log evidence from test runs:
 - `Applied partition filter: rpt_as_of_mo BETWEEN '2022-11' AND '2028-11'` (Case III partition pruning)
@@ -199,6 +257,7 @@ Log evidence from test runs:
 
 ## Documentation
 
+- [DESIGN_DOCUMENT.md](docs/DESIGN_DOCUMENT.md) - Technical design document (v9.4)
 - [CHANGELOG.md](docs/CHANGELOG.md) - Version history and changes
 - [PERFORMANCE.md](docs/PERFORMANCE.md) - Performance analysis and benchmarks
 - [CASE_IV_BULK_HISTORICAL_LOAD.md](docs/CASE_IV_BULK_HISTORICAL_LOAD.md) - Case IV details

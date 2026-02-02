@@ -1,5 +1,198 @@
 # Changelog - Summary Pipeline
 
+## v9.4.1 (February 2026)
+
+### Bug Fix: Multiple Backfills in Same Batch
+
+**CRITICAL**: Fixed issue where multiple backfills for the same account in the same batch were not all propagated to future months.
+
+#### Problem (v9.4 - BROKEN)
+```
+Account 8002 has existing: Dec 2025, Jan 2026
+Backfills arriving: Oct 2025 (6500), Nov 2025 (6200)
+
+RESULT in Jan 2026:
+  bal[2] = NULL  (WRONG! Should be 6200 - Nov backfill)
+  bal[3] = 6500  (Oct backfill - this one worked)
+```
+
+#### Root Cause
+In `process_case_iii()`, each backfill created a separate update with a single position, then deduplication picked just ONE update per account+month using arbitrary ordering (`F.lit(1)`).
+
+#### Solution (v9.4.1 - FIXED)
+```python
+# 1. Collect all backfills per account+month
+aggregated_df = future_joined.groupBy(pk, "summary_month").agg(
+    F.collect_list(F.struct("backfill_position", "backfill_balance_am", ...)).alias("backfill_list"),
+    F.first("existing_balance_am_history").alias("existing_balance_am_history"),
+    ...
+)
+
+# 2. Apply ALL backfills using aggregate() inside transform()
+update_expr = f"""
+    transform(
+        existing_{array_name},
+        (x, i) -> COALESCE(
+            aggregate(
+                backfill_list,
+                CAST(NULL AS {sql_type}),  # STRING or BIGINT based on column type
+                (acc, b) -> CASE WHEN b.backfill_position = i THEN b.{backfill_col} ELSE acc END
+            ),
+            x
+        )
+    ) as {array_name}
+"""
+```
+
+#### Result (v9.4.1 - CORRECT)
+```
+Account 8002 Jan 2026:
+  bal[2] = 6200  (Nov backfill) ✓
+  bal[3] = 6500  (Oct backfill) ✓
+```
+
+### Bug Fix: Type-Aware Aggregate Accumulator
+
+Fixed type mismatch error when processing STRING columns (payment_rating_cd, asset_class_cd_4in).
+
+#### Problem
+```
+[DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE] Cannot resolve "aggregate(...)" 
+due to data type mismatch: Parameter 3 requires the "BIGINT" type, 
+however "..." has the type "STRING"
+```
+
+#### Solution
+```python
+# Get the data type for this column from config
+data_type = rc.get('type', rc.get('data_type', 'Integer'))
+sql_type = 'STRING' if data_type.lower() == 'string' else 'BIGINT'
+
+# Use type-aware accumulator
+CAST(NULL AS {sql_type})  # Now correctly STRING for string columns
+```
+
+### New Test: Duplicate Record Handling
+
+Added `tests/test_duplicate_records.py` to verify that when the same `(cons_acct_key, rpt_as_of_mo)` appears multiple times with different values, the record with latest `base_ts` wins.
+
+#### Test Cases
+| Account | Scenario | Expected Winner |
+|---------|----------|-----------------|
+| 12001 | 2 records same month (10:00, 11:00) | 11:00 → balance=5500 |
+| 12002 | 3 records same month (09:00, 10:00, 11:00) | 11:00 → balance=7000 |
+| 12003 | Multi-month with Feb duplicate | 11:00 → Feb balance=9000 |
+
+### Test Results
+
+| Test Suite | Passed | Failed |
+|------------|--------|--------|
+| `test_all_scenarios.py` | 26 | 0 |
+| `test_comprehensive_edge_cases.py` | 34 | 0 |
+| `test_duplicate_records.py` | 14 | 0 |
+| **Total** | **74** | **0** |
+
+### Files Modified
+- `pipeline/summary_pipeline.py`:
+  - Lines 1207-1277: Multiple backfill merge using `collect_list` + `aggregate`
+  - Lines 1245-1247: Type-aware SQL generation (STRING vs BIGINT)
+- `tests/test_comprehensive_edge_cases.py`:
+  - Lines 813-816: Fixed 9002 test expectation (46800 not 36000)
+- `tests/test_duplicate_records.py`: **NEW** - Duplicate record handling test
+
+---
+
+## v9.4 (January 2026)
+
+### Temp Table Processing Architecture
+
+Major architectural change to break Spark DAG lineage and improve memory efficiency:
+
+#### 1. Temp Table Approach (Breaking DAG Lineage)
+- **Problem**: Previous versions used in-memory union of all case results, causing Spark to hold entire DAG lineage in memory
+- **Solution**: Each case writes results to a temporary Iceberg table, materializing data and breaking the lineage
+- **Impact**: Significantly reduced driver memory pressure for large batches
+
+```python
+# Before (v9.3): In-memory union
+case_i_results = process_case_i(...)
+case_ii_results = process_case_ii(...)
+all_results = case_i_results.unionByName(case_ii_results).unionByName(...)
+write_results(all_results)  # DAG lineage held until write
+
+# After (v9.4): Temp table materialization
+temp_table = generate_temp_table_name()  # demo.temp.pipeline_batch_{ts}_{uuid}
+create_temp_table(temp_table)
+
+write_to_temp_table(case_i_results, temp_table, "CASE_I")
+write_to_temp_table(case_ii_results, temp_table, "CASE_II")  # DAG lineage broken
+# ... each case materializes independently
+
+final_results = spark.read.table(temp_table)
+write_results(final_results)
+drop_temp_table(temp_table)
+```
+
+#### 2. Unique Batch ID Generation
+- **Format**: `{schema}.pipeline_batch_{timestamp}_{uuid}`
+- **Example**: `demo.temp.pipeline_batch_20260131_143052_a1b2c3d4`
+- **Purpose**: Ensures no collision between concurrent runs or retries
+
+#### 3. Automatic Cleanup (try/finally)
+- **Implementation**: Temp table wrapped in try/finally block
+- **Behavior**: Temp table dropped on success AND failure
+- **Safety**: No orphaned temp tables under normal operation
+
+```python
+try:
+    create_temp_table(temp_table)
+    process_all_cases(...)
+    write_final_results(...)
+finally:
+    drop_temp_table(temp_table)  # Always executes
+```
+
+#### 4. Orphan Cleanup Utility
+- **New Function**: `cleanup_orphaned_temp_tables(spark, config, max_age_hours=24)`
+- **Purpose**: Clean up temp tables from crashed/killed runs
+- **Usage**: Run as scheduled job or manual maintenance
+
+```bash
+# CLI usage
+python summary_pipeline.py --config config.json --cleanup-orphans --max-age-hours 24
+```
+
+#### 5. Legacy Mode
+- **Flag**: `--legacy`
+- **Purpose**: Fall back to v9.3 in-memory union approach
+- **Use Case**: Debugging, comparison testing
+
+```bash
+# Run with temp table (default, recommended)
+python summary_pipeline.py --config config.json
+
+# Run legacy mode (in-memory union)
+python summary_pipeline.py --config config.json --legacy
+```
+
+### Test Results
+- **25 tests passing** (up from 21 in v9.3)
+- Added 4 new tests for Case IV gap handling scenarios
+
+### Files Modified
+- `pipeline/summary_pipeline.py`:
+  - Lines 230-255: `generate_temp_table_name()` function
+  - Lines 257-293: `create_temp_table()` function
+  - Lines 296-350: `write_to_temp_table()` function
+  - Lines 353-372: `drop_temp_table()` function
+  - Lines 375-437: `cleanup_orphaned_temp_tables()` function
+  - Lines 1450-1600: Updated `run_pipeline()` with temp table orchestration
+
+### Migration from v9.3
+No config changes required. The temp table approach is the default. Use `--legacy` flag to revert to v9.3 behavior if needed.
+
+---
+
 ## v9.3 (January 2026)
 
 ### Performance Optimizations

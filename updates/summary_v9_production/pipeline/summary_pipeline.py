@@ -1,6 +1,15 @@
 """
-Summary Pipeline v9.3 - Optimized Production Implementation
+Summary Pipeline v9.4 - Temp Table Optimized Production Implementation
 =================================================================
+
+VERSION 9.4 OPTIMIZATIONS:
+- Temp table approach: Breaks Spark lineage for better performance at scale
+- Each case writes to temp table, releasing memory immediately
+- Implicit checkpointing per case
+- Easier debugging (can query temp table mid-run)
+- Fault tolerance (partial progress preserved on failure)
+- Automatic cleanup with try/finally
+- Orphan cleanup utility for failed runs
 
 VERSION 9.3 OPTIMIZATIONS:
 - Partition-aware reads: Case III now uses partition filters to avoid full table scan
@@ -39,6 +48,7 @@ Enhanced version with ALL 4 cases:
 - Case IV:  Bulk historical load (new account with multiple months in batch)
 
 Performance Improvements:
+- TEMP TABLE: Breaks complex DAG lineage (prevents driver OOM)
 - PARTITION PRUNING: Case III reads only necessary partitions (50-90% I/O reduction)
 - SINGLE MERGE: 1 MERGE per table instead of 4 (4x less write amplification)
 - SQL-based array updates (faster than UDF loops)
@@ -46,6 +56,20 @@ Performance Improvements:
 - Better cache management (MEMORY_AND_DISK)
 - Single-pass array updates
 - Configurable Spark settings
+
+CONFIG FORMAT:
+- Uses flat JSON structure matching original summary.json format
+- No PipelineConfig class - config is a plain Python dict
+
+USAGE:
+  # Run with temp table (default, recommended)
+  python summary_pipeline.py --config config.json
+
+  # Run legacy (in-memory union)
+  python summary_pipeline.py --config config.json --legacy
+
+  # Cleanup orphaned temp tables
+  python summary_pipeline.py --config config.json --cleanup-orphans
 """
 
 from pyspark.sql import SparkSession, Window
@@ -58,7 +82,8 @@ import argparse
 import sys
 import time
 import math
-from datetime import datetime, date
+import uuid
+from datetime import datetime, date, timedelta
 from dateutil.relativedelta import relativedelta
 from typing import Dict, List, Tuple, Any, Optional
 
@@ -71,14 +96,14 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger("SummaryPipeline.v9.3")
+logger = logging.getLogger("SummaryPipeline.v9.4")
 
 
 # ============================================================================
 # CONSTANTS
 # ============================================================================
 
-HISTORY_LENGTH = 36
+DEFAULT_HISTORY_LENGTH = 36
 TARGET_RECORDS_PER_PARTITION = 5_000_000
 MIN_PARTITIONS = 32
 MAX_PARTITIONS = 16384
@@ -90,168 +115,87 @@ TYPE_MAP = {
     "Date": DateType()
 }
 
+# Storage level mapping
+CACHE_LEVELS = {
+    "MEMORY_AND_DISK": StorageLevel.MEMORY_AND_DISK,
+    "MEMORY_ONLY": StorageLevel.MEMORY_ONLY,
+    "DISK_ONLY": StorageLevel.DISK_ONLY
+}
+
 
 # ============================================================================
-# CONFIGURATION
+# CONFIG HELPER FUNCTIONS
 # ============================================================================
 
-class PipelineConfig:
-    """Configuration for summary pipeline - Full production support"""
+def load_config(config_path: str) -> Dict[str, Any]:
+    """Load configuration from JSON file and return as dict"""
+    logger.info(f"Loading configuration from: {config_path}")
+    with open(config_path, 'r') as f:
+        config = json.load(f)
     
-    def __init__(self, config_path: str = None):
-        # Default table names
-        self.accounts_table = "spark_catalog.edf_gold.ivaps_consumer_accounts_all"
-        self.latest_summary_table = "ascend_iceberg.ascenddb.latest_summary"
-        self.summary_table = "ascend_iceberg.ascenddb.summary"
-        
-        # Keys
-        self.primary_key = "cons_acct_key"
-        self.partition_key = "rpt_as_of_mo"
-        self.timestamp_key = "base_ts"
-        self.primary_date_key = "acct_dt"
-        
-        # Performance tuning
-        self.cache_level = StorageLevel.MEMORY_AND_DISK
-        self.broadcast_threshold = 10_000_000
-        self.target_per_partition = TARGET_RECORDS_PER_PARTITION
-        self.min_partitions = MIN_PARTITIONS
-        self.max_partitions = MAX_PARTITIONS
-        
-        # Column mappings (source -> destination)
-        self.column_mappings = {}
-        
-        # Column transformations
-        self.column_transformations = []
-        
-        # Inferred/derived columns
-        self.inferred_columns = []
-        
-        # Date columns (need special handling for invalid dates)
-        self.date_columns = []
-        
-        # Coalesce exclusion columns
-        self.coalesce_exclusion_columns = []
-        
-        # History arrays to update (array_name, source_column, data_type, mapper_expr)
-        self.rolling_columns = []
-        
-        # Grid columns (generated from history arrays)
-        self.grid_columns = []
-        
-        # Column lists for output tables
-        self.summary_columns = []
-        self.latest_summary_columns = []
-        
-        # History length
-        self.history_length = HISTORY_LENGTH
-        
-        # Catalog config
-        self.catalog = {}
-        
-        # Spark config
-        self.spark_config = {}
-        
-        # Load from JSON if provided
-        if config_path:
-            self._load_from_json(config_path)
+    # Log config summary
+    rolling_count = len(config.get('rolling_columns', []))
+    columns_count = len(config.get('columns', {}))
+    transform_count = len(config.get('column_transformations', []))
+    logger.info(f"Configuration loaded: {columns_count} column mappings, "
+               f"{rolling_count} rolling columns, "
+               f"{transform_count} transformations")
     
-    def _load_from_json(self, config_path: str):
-        """Load configuration from JSON file"""
-        logger.info(f"Loading configuration from: {config_path}")
-        with open(config_path, 'r') as f:
-            cfg = json.load(f)
-        
-        # Catalog
-        if 'catalog' in cfg:
-            self.catalog = cfg['catalog']
-        
-        # Tables
-        if 'tables' in cfg:
-            self.accounts_table = cfg['tables'].get('source', self.accounts_table)
-            self.summary_table = cfg['tables'].get('summary', self.summary_table)
-            self.latest_summary_table = cfg['tables'].get('latest_summary', self.latest_summary_table)
-        
-        # Keys
-        if 'keys' in cfg:
-            self.primary_key = cfg['keys'].get('primary', self.primary_key)
-            self.partition_key = cfg['keys'].get('partition', self.partition_key)
-            self.timestamp_key = cfg['keys'].get('timestamp', self.timestamp_key)
-            self.primary_date_key = cfg['keys'].get('primary_date', self.primary_date_key)
-        
-        # History length
-        if 'history' in cfg:
-            self.history_length = cfg['history'].get('length', HISTORY_LENGTH)
-        
-        # Column mappings
-        if 'columns' in cfg:
-            self.column_mappings = cfg['columns']
-        
-        # Column transformations
-        if 'column_transformations' in cfg:
-            self.column_transformations = cfg['column_transformations']
-        
-        # Inferred columns
-        if 'inferred_columns' in cfg:
-            self.inferred_columns = cfg['inferred_columns']
-        
-        # Date columns
-        if 'date_columns' in cfg:
-            self.date_columns = cfg['date_columns']
-        
-        # Coalesce exclusion
-        if 'coalesce_exclusion_columns' in cfg:
-            self.coalesce_exclusion_columns = cfg['coalesce_exclusion_columns']
-        
-        # Rolling columns
-        if 'rolling_columns' in cfg:
-            self.rolling_columns = cfg['rolling_columns']
-        
-        # Grid columns
-        if 'grid_columns' in cfg:
-            self.grid_columns = cfg['grid_columns']
-        
-        # Output column lists
-        if 'summary_columns' in cfg:
-            self.summary_columns = cfg['summary_columns']
-        if 'latest_summary_columns' in cfg:
-            self.latest_summary_columns = cfg['latest_summary_columns']
-        
-        # Performance settings
-        if 'performance' in cfg:
-            perf = cfg['performance']
-            self.broadcast_threshold = perf.get('broadcast_threshold', self.broadcast_threshold)
-            self.target_per_partition = perf.get('target_records_per_partition', self.target_per_partition)
-            self.min_partitions = perf.get('min_partitions', self.min_partitions)
-            self.max_partitions = perf.get('max_partitions', self.max_partitions)
-            cache_level = perf.get('cache_level', 'MEMORY_AND_DISK')
-            if cache_level == 'MEMORY_AND_DISK':
-                self.cache_level = StorageLevel.MEMORY_AND_DISK
-            elif cache_level == 'MEMORY_ONLY':
-                self.cache_level = StorageLevel.MEMORY_ONLY
-            elif cache_level == 'DISK_ONLY':
-                self.cache_level = StorageLevel.DISK_ONLY
-        
-        # Spark config
-        if 'spark' in cfg:
-            self.spark_config = cfg['spark']
-        
-        logger.info(f"Configuration loaded: {len(self.column_mappings)} column mappings, "
-                   f"{len(self.rolling_columns)} rolling columns, "
-                   f"{len(self.column_transformations)} transformations")
+    return config
+
+
+def validate_config(config: Dict[str, Any]) -> bool:
+    """Validate configuration"""
+    required_fields = ['primary_column', 'partition_column', 'source_table', 
+                       'destination_table', 'rolling_columns']
     
-    def validate(self) -> bool:
-        """Validate configuration"""
-        if not self.primary_key or not self.partition_key:
-            logger.error("Primary key and partition key are required")
+    for field in required_fields:
+        if field not in config or not config[field]:
+            logger.error(f"Required config field '{field}' is missing or empty")
             return False
-        if not self.rolling_columns:
-            logger.error("At least one rolling column is required")
-            return False
-        return True
     
-    def get_history_col_name(self, rolling_col_name: str) -> str:
-        """Get history array column name for a rolling column"""
-        return f"{rolling_col_name}_history"
+    return True
+
+
+def get_history_col_name(rolling_col_name: str) -> str:
+    """Get history array column name for a rolling column"""
+    return f"{rolling_col_name}_history"
+
+
+def get_history_length(config: Dict[str, Any]) -> int:
+    """Get history length from config or default"""
+    return config.get('history_length', DEFAULT_HISTORY_LENGTH)
+
+
+def get_cache_level(config: Dict[str, Any]) -> StorageLevel:
+    """Get cache level from config or default"""
+    perf = config.get('performance', {})
+    cache_str = perf.get('cache_level', 'MEMORY_AND_DISK')
+    return CACHE_LEVELS.get(cache_str, StorageLevel.MEMORY_AND_DISK)
+
+
+def get_broadcast_threshold(config: Dict[str, Any]) -> int:
+    """Get broadcast threshold from config or default"""
+    perf = config.get('performance', {})
+    return perf.get('broadcast_threshold', 10_000_000)
+
+
+def get_target_per_partition(config: Dict[str, Any]) -> int:
+    """Get target records per partition from config or default"""
+    perf = config.get('performance', {})
+    return perf.get('target_records_per_partition', TARGET_RECORDS_PER_PARTITION)
+
+
+def get_min_partitions(config: Dict[str, Any]) -> int:
+    """Get min partitions from config or default"""
+    perf = config.get('performance', {})
+    return perf.get('min_partitions', MIN_PARTITIONS)
+
+
+def get_max_partitions(config: Dict[str, Any]) -> int:
+    """Get max partitions from config or default"""
+    perf = config.get('performance', {})
+    return perf.get('max_partitions', MAX_PARTITIONS)
 
 
 # ============================================================================
@@ -263,32 +207,254 @@ def month_to_int_expr(col_name: str) -> str:
     return f"(CAST(SUBSTRING({col_name}, 1, 4) AS INT) * 12 + CAST(SUBSTRING({col_name}, 6, 2) AS INT))"
 
 
-def calculate_partitions(record_count: int, config: PipelineConfig) -> int:
+def calculate_partitions(record_count: int, config: Dict[str, Any]) -> int:
     """Calculate optimal partition count"""
     if record_count == 0:
-        return config.min_partitions
-    partitions = record_count / config.target_per_partition
+        return get_min_partitions(config)
+    target = get_target_per_partition(config)
+    min_parts = get_min_partitions(config)
+    max_parts = get_max_partitions(config)
+    partitions = record_count / target
     power_of_2 = 2 ** round(math.log2(max(1, partitions)))
-    return int(max(config.min_partitions, min(config.max_partitions, power_of_2)))
+    return int(max(min_parts, min(max_parts, power_of_2)))
 
 
-def configure_spark(spark: SparkSession, num_partitions: int, config: PipelineConfig):
+# ============================================================================
+# TEMP TABLE MANAGEMENT
+# ============================================================================
+
+TEMP_TABLE_PREFIX = "pipeline_batch_"
+TEMP_TABLE_SCHEMA = "temp"  # Schema/namespace for temp tables
+
+
+def generate_temp_table_name(config: Dict[str, Any]) -> str:
+    """
+    Generate a unique temp table name for this batch.
+    
+    Format: {catalog}.{temp_schema}.pipeline_batch_{timestamp}_{uuid}
+    
+    Example: demo.temp.pipeline_batch_20260130_143052_a1b2c3d4
+    """
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    unique_id = uuid.uuid4().hex[:8]
+    
+    # Extract catalog from destination table (e.g., "demo.schema.table" -> "demo")
+    dest_table = config['destination_table']
+    parts = dest_table.split('.')
+    
+    if len(parts) >= 2:
+        catalog = parts[0]
+    else:
+        catalog = "spark_catalog"
+    
+    # Use configured temp schema or default
+    temp_schema = config.get('temp_table_schema', TEMP_TABLE_SCHEMA)
+    
+    table_name = f"{catalog}.{temp_schema}.{TEMP_TABLE_PREFIX}{timestamp}_{unique_id}"
+    return table_name
+
+
+def create_temp_table(spark, temp_table_name: str, config: Dict[str, Any]) -> bool:
+    """
+    Create a temp table with the same schema as the summary table plus _case_type column.
+    
+    Uses CREATE TABLE ... AS SELECT to clone the schema, then adds _case_type column.
+    
+    Args:
+        spark: SparkSession
+        temp_table_name: Fully qualified temp table name
+        config: Pipeline config
+        
+    Returns:
+        True if created successfully, False otherwise
+    """
+    summary_table = config['destination_table']
+    
+    try:
+        # Ensure temp schema exists
+        parts = temp_table_name.split('.')
+        if len(parts) >= 2:
+            catalog_schema = '.'.join(parts[:-1])
+            spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {catalog_schema}")
+        
+        # Create empty table with same schema as summary PLUS _case_type column
+        spark.sql(f"""
+            CREATE TABLE {temp_table_name}
+            USING iceberg
+            AS SELECT *, CAST(NULL AS STRING) as _case_type 
+            FROM {summary_table} WHERE 1=0
+        """)
+        
+        logger.info(f"Created temp table: {temp_table_name}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to create temp table {temp_table_name}: {e}")
+        raise
+
+
+def write_to_temp_table(spark, df, temp_table_name: str, case_type: str) -> int:
+    """
+    Write a DataFrame to the temp table.
+    
+    Filters out internal columns that aren't in the target table schema.
+    
+    Args:
+        spark: SparkSession
+        df: DataFrame to write
+        temp_table_name: Fully qualified temp table name
+        case_type: Case type for logging (CASE_I, CASE_II, etc.)
+        
+    Returns:
+        Number of records written
+    """
+    if df is None:
+        return 0
+    
+    count = df.count()
+    if count == 0:
+        logger.info(f"{case_type}: No records to write")
+        return 0
+    
+    # Get target table columns
+    target_columns = [field.name for field in spark.table(temp_table_name).schema.fields]
+    
+    # Filter DataFrame to only include target columns
+    # Internal columns to exclude (they're used for processing but shouldn't be persisted)
+    internal_cols = {'min_month_for_new_account', 'count_months_for_new_account', 
+                     'month_int', 'max_existing_month', 'max_existing_ts', 
+                     'max_month_int', 'case_type', 'MONTH_DIFF', '_rn', '_case_priority'}
+    
+    # Select only columns that exist in target table
+    select_cols = [c for c in target_columns if c in df.columns or c == '_case_type']
+    
+    # Build the final DataFrame
+    df_to_write = df
+    
+    # Ensure _case_type exists
+    if '_case_type' not in df.columns:
+        df_to_write = df_to_write.withColumn('_case_type', F.lit(case_type))
+    
+    # Add any missing columns as NULL
+    for col in target_columns:
+        if col not in df_to_write.columns:
+            df_to_write = df_to_write.withColumn(col, F.lit(None))
+    
+    # Select in target table column order
+    df_to_write = df_to_write.select(*target_columns)
+    
+    # Write to temp table
+    df_to_write.writeTo(temp_table_name).append()
+    logger.info(f"{case_type}: Wrote {count:,} records to temp table")
+    
+    return count
+
+
+def drop_temp_table(spark, temp_table_name: str, purge: bool = True) -> bool:
+    """
+    Drop the temp table.
+    
+    Args:
+        spark: SparkSession
+        temp_table_name: Fully qualified temp table name
+        purge: If True, also delete the underlying data files
+        
+    Returns:
+        True if dropped successfully
+    """
+    try:
+        purge_clause = "PURGE" if purge else ""
+        spark.sql(f"DROP TABLE IF EXISTS {temp_table_name} {purge_clause}")
+        logger.info(f"Dropped temp table: {temp_table_name}")
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to drop temp table {temp_table_name}: {e}")
+        return False
+
+
+def cleanup_orphaned_temp_tables(spark, config: Dict[str, Any], 
+                                  max_age_hours: int = 24) -> int:
+    """
+    Clean up orphaned temp tables from failed pipeline runs.
+    
+    This function should be called periodically (e.g., daily) to clean up
+    temp tables that were not properly dropped due to job failures.
+    
+    Args:
+        spark: SparkSession
+        config: Pipeline config
+        max_age_hours: Maximum age in hours before a temp table is considered orphaned
+        
+    Returns:
+        Number of tables cleaned up
+    """
+    dest_table = config['destination_table']
+    parts = dest_table.split('.')
+    
+    if len(parts) >= 2:
+        catalog = parts[0]
+    else:
+        catalog = "spark_catalog"
+    
+    temp_schema = config.get('temp_table_schema', TEMP_TABLE_SCHEMA)
+    
+    cleaned = 0
+    cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
+    cutoff_str = cutoff_time.strftime('%Y%m%d_%H%M%S')
+    
+    try:
+        # List all temp tables
+        tables_df = spark.sql(f"SHOW TABLES IN {catalog}.{temp_schema}")
+        tables = tables_df.filter(
+            tables_df.tableName.startswith(TEMP_TABLE_PREFIX)
+        ).collect()
+        
+        for row in tables:
+            table_name = row['tableName']
+            
+            # Extract timestamp from table name
+            # Format: pipeline_batch_20260130_143052_a1b2c3d4
+            try:
+                parts = table_name.replace(TEMP_TABLE_PREFIX, '').split('_')
+                if len(parts) >= 2:
+                    table_timestamp = f"{parts[0]}_{parts[1]}"
+                    
+                    # If table is older than cutoff, drop it
+                    if table_timestamp < cutoff_str:
+                        full_name = f"{catalog}.{temp_schema}.{table_name}"
+                        drop_temp_table(spark, full_name, purge=True)
+                        cleaned += 1
+                        logger.info(f"Cleaned up orphaned temp table: {full_name}")
+            except Exception as e:
+                logger.warning(f"Could not parse temp table name {table_name}: {e}")
+                continue
+        
+        logger.info(f"Cleanup complete: removed {cleaned} orphaned temp tables")
+        return cleaned
+        
+    except Exception as e:
+        logger.warning(f"Error during temp table cleanup: {e}")
+        return cleaned
+
+
+def configure_spark(spark: SparkSession, num_partitions: int, config: Dict[str, Any]):
     """Configure Spark for optimal partitioning"""
     spark.conf.set("spark.sql.shuffle.partitions", str(num_partitions))
     spark.conf.set("spark.default.parallelism", str(num_partitions))
     
     # Apply additional spark config from config file
-    if config.spark_config:
-        if config.spark_config.get('adaptive_enabled', True):
+    spark_config = config.get('spark', {})
+    if spark_config:
+        if spark_config.get('adaptive_enabled', True):
             spark.conf.set("spark.sql.adaptive.enabled", "true")
-        if config.spark_config.get('adaptive_coalesce', True):
+        if spark_config.get('adaptive_coalesce', True):
             spark.conf.set("spark.sql.adaptive.coalescePartitions.enabled", "true")
-        if config.spark_config.get('adaptive_skew_join', True):
+        if spark_config.get('adaptive_skew_join', True):
             spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "true")
-        if 'broadcast_timeout' in config.spark_config:
-            spark.conf.set("spark.sql.broadcastTimeout", str(config.spark_config['broadcast_timeout']))
-        if 'auto_broadcast_threshold' in config.spark_config:
-            spark.conf.set("spark.sql.autoBroadcastJoinThreshold", config.spark_config['auto_broadcast_threshold'])
+        if 'broadcast_timeout' in spark_config:
+            spark.conf.set("spark.sql.broadcastTimeout", str(spark_config['broadcast_timeout']))
+        if 'auto_broadcast_threshold' in spark_config:
+            spark.conf.set("spark.sql.autoBroadcastJoinThreshold", spark_config['auto_broadcast_threshold'])
 
 
 def get_spark_type(data_type: str):
@@ -300,7 +466,7 @@ def get_spark_type(data_type: str):
 # DATA PREPARATION FUNCTIONS
 # ============================================================================
 
-def prepare_source_data(df, config: PipelineConfig):
+def prepare_source_data(df, config: Dict[str, Any]):
     """
     Prepare source data with:
     1. Column mappings (rename source -> destination)
@@ -311,62 +477,71 @@ def prepare_source_data(df, config: PipelineConfig):
     """
     logger.info("Preparing source data...")
     
-    pk = config.primary_key
-    prt = config.partition_key
-    ts = config.timestamp_key
+    pk = config['primary_column']
+    prt = config['partition_column']
+    ts = config['max_identifier_column']
     
     result = df
     
     # Step 1: Apply column mappings
-    if config.column_mappings:
+    column_mappings = config.get('columns', {})
+    if column_mappings:
         select_exprs = []
-        for src_col, dst_col in config.column_mappings.items():
+        for src_col, dst_col in column_mappings.items():
             if src_col in result.columns:
                 select_exprs.append(F.col(src_col).alias(dst_col))
             else:
                 logger.warning(f"Source column '{src_col}' not found, skipping")
         
         # Add any columns not in mapping (like partition columns already present)
-        mapped_sources = set(config.column_mappings.keys())
+        mapped_sources = set(column_mappings.keys())
         for col in result.columns:
             if col not in mapped_sources:
                 # Check if it's a destination column name
-                if col in config.column_mappings.values():
+                if col in column_mappings.values():
                     select_exprs.append(F.col(col))
         
         if select_exprs:
             result = result.select(*select_exprs)
-            logger.info(f"Applied {len(config.column_mappings)} column mappings")
+            logger.info(f"Applied {len(column_mappings)} column mappings")
     
     # Step 2: Apply column transformations
-    for transform in config.column_transformations:
+    column_transformations = config.get('column_transformations', [])
+    for transform in column_transformations:
         col_name = transform['name']
-        expr = transform['expr']
+        # Use 'mapper_expr' to match original format
+        expr = transform.get('mapper_expr', transform.get('expr', col_name))
         if col_name in result.columns or any(c in expr for c in result.columns):
             result = result.withColumn(col_name, F.expr(expr))
     
-    if config.column_transformations:
-        logger.info(f"Applied {len(config.column_transformations)} column transformations")
+    if column_transformations:
+        logger.info(f"Applied {len(column_transformations)} column transformations")
     
     # Step 3: Apply inferred/derived columns
-    for inferred in config.inferred_columns:
+    inferred_columns = config.get('inferred_columns', [])
+    for inferred in inferred_columns:
         col_name = inferred['name']
-        expr = inferred['expr']
-        result = result.withColumn(col_name, F.expr(expr))
+        # Use 'mapper_expr' to match original format
+        expr = inferred.get('mapper_expr', inferred.get('expr', ''))
+        if expr:
+            result = result.withColumn(col_name, F.expr(expr))
     
-    if config.inferred_columns:
-        logger.info(f"Created {len(config.inferred_columns)} inferred columns")
+    if inferred_columns:
+        logger.info(f"Created {len(inferred_columns)} inferred columns")
     
     # Step 4: Apply rolling column mappers (prepare values for history arrays)
-    for rc in config.rolling_columns:
-        src_col = rc['source_column']
+    rolling_columns = config.get('rolling_columns', [])
+    for rc in rolling_columns:
+        # Use 'mapper_column' to match original format (source column for the value)
+        src_col = rc.get('mapper_column', rc.get('source_column', rc['name']))
         mapper_expr = rc.get('mapper_expr', src_col)
         # Create a prepared column for the rolling value
         if mapper_expr != src_col:
-            result = result.withColumn(f"_prepared_{src_col}", F.expr(mapper_expr))
+            result = result.withColumn(f"_prepared_{rc['name']}", F.expr(mapper_expr))
     
     # Step 5: Validate date columns (replace invalid years with NULL)
-    for date_col in config.date_columns:
+    date_columns = config.get('date_col_list', config.get('date_columns', []))
+    for date_col in date_columns:
         if date_col in result.columns:
             result = result.withColumn(
                 date_col,
@@ -374,8 +549,8 @@ def prepare_source_data(df, config: PipelineConfig):
                  .otherwise(F.col(date_col))
             )
     
-    if config.date_columns:
-        logger.info(f"Validated {len(config.date_columns)} date columns")
+    if date_columns:
+        logger.info(f"Validated {len(date_columns)} date columns")
     
     # Step 6: Deduplicate by primary key + partition, keeping latest timestamp
     window_spec = Window.partitionBy(pk, prt).orderBy(F.col(ts).desc())
@@ -395,7 +570,7 @@ def prepare_source_data(df, config: PipelineConfig):
 # STEP 1: LOAD AND CLASSIFY RECORDS
 # ============================================================================
 
-def load_and_classify_accounts(spark: SparkSession, config: PipelineConfig, 
+def load_and_classify_accounts(spark: SparkSession, config: Dict[str, Any], 
                                 filter_expr: str = None):
     """
     Load accounts and classify into Case I/II/III
@@ -410,19 +585,21 @@ def load_and_classify_accounts(spark: SparkSession, config: PipelineConfig,
     logger.info("STEP 1: Load and Classify Accounts")
     logger.info("=" * 80)
     
-    pk = config.primary_key
-    prt = config.partition_key
-    ts = config.timestamp_key
+    pk = config['primary_column']
+    prt = config['partition_column']
+    ts = config['max_identifier_column']
+    source_table = config['source_table']
+    latest_summary_table = config['latest_history_table']
     
     # Load accounts
-    logger.info(f"Loading accounts from {config.accounts_table}")
+    logger.info(f"Loading accounts from {source_table}")
     if filter_expr:
         accounts_df = spark.sql(f"""
-            SELECT * FROM {config.accounts_table}
+            SELECT * FROM {source_table}
             WHERE {filter_expr}
         """)
     else:
-        accounts_df = spark.read.table(config.accounts_table)
+        accounts_df = spark.read.table(source_table)
     
     # Prepare source data (mappings, transformations, deduplication)
     accounts_prepared = prepare_source_data(accounts_df, config)
@@ -434,7 +611,7 @@ def load_and_classify_accounts(spark: SparkSession, config: PipelineConfig,
     )
     
     # Load summary metadata (small - can broadcast)
-    logger.info(f"Loading summary metadata from {config.latest_summary_table}")
+    logger.info(f"Loading summary metadata from {latest_summary_table}")
     try:
         summary_meta = spark.sql(f"""
             SELECT 
@@ -442,7 +619,7 @@ def load_and_classify_accounts(spark: SparkSession, config: PipelineConfig,
                 {prt} as max_existing_month,
                 {ts} as max_existing_ts,
                 {month_to_int_expr(prt)} as max_month_int
-            FROM {config.latest_summary_table}
+            FROM {latest_summary_table}
         """)
         meta_count = summary_meta.count()
         logger.info(f"Loaded metadata for {meta_count:,} existing accounts")
@@ -534,7 +711,8 @@ def load_and_classify_accounts(spark: SparkSession, config: PipelineConfig,
     )
     
     # Cache for multiple filters
-    classified.persist(config.cache_level)
+    cache_level = get_cache_level(config)
+    classified.persist(cache_level)
     
     # Log case distribution
     case_stats = classified.groupBy("case_type").count().collect()
@@ -551,7 +729,7 @@ def load_and_classify_accounts(spark: SparkSession, config: PipelineConfig,
 # STEP 2: PROCESS CASE I (NEW ACCOUNTS)
 # ============================================================================
 
-def process_case_i(case_i_df, config: PipelineConfig):
+def process_case_i(case_i_df, config: Dict[str, Any]):
     """
     Process Case I - create initial arrays for new accounts
     
@@ -569,16 +747,20 @@ def process_case_i(case_i_df, config: PipelineConfig):
     logger.info(f"Processing {count:,} new accounts")
     
     result = case_i_df
-    history_len = config.history_length
+    history_len = get_history_length(config)
+    rolling_columns = config.get('rolling_columns', [])
+    grid_columns = config.get('grid_columns', [])
     
     # Create initial arrays for each rolling column
-    for rc in config.rolling_columns:
-        array_name = config.get_history_col_name(rc['name'])
-        src_col = rc['source_column']
+    for rc in rolling_columns:
+        array_name = get_history_col_name(rc['name'])
+        # Use 'mapper_column' to match original format
+        src_col = rc.get('mapper_column', rc.get('source_column', rc['name']))
         mapper_expr = rc.get('mapper_expr', src_col)
         
         # Use prepared column if mapper was applied, else use source
-        value_col = f"_prepared_{src_col}" if mapper_expr != src_col and f"_prepared_{src_col}" in result.columns else src_col
+        prepared_col = f"_prepared_{rc['name']}"
+        value_col = prepared_col if prepared_col in result.columns else src_col
         
         # Array: [current_value, NULL, NULL, ..., NULL]
         null_array = ", ".join(["NULL" for _ in range(history_len - 1)])
@@ -588,10 +770,13 @@ def process_case_i(case_i_df, config: PipelineConfig):
         )
     
     # Generate grid columns
-    for gc in config.grid_columns:
-        source_history = gc['source_history']
+    for gc in grid_columns:
+        # Use 'mapper_rolling_column' to match original format
+        source_rolling = gc.get('mapper_rolling_column', gc.get('source_history', ''))
+        source_history = get_history_col_name(source_rolling)
         placeholder = gc.get('placeholder', '?')
-        separator = gc.get('separator', '')
+        # Note: original uses 'seperator' (typo preserved)
+        separator = gc.get('seperator', gc.get('separator', ''))
         
         result = result.withColumn(
             gc['name'],
@@ -619,7 +804,7 @@ def process_case_i(case_i_df, config: PipelineConfig):
 # STEP 3: PROCESS CASE II (FORWARD ENTRIES)
 # ============================================================================
 
-def process_case_ii(spark: SparkSession, case_ii_df, config: PipelineConfig):
+def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any]):
     """
     Process Case II - shift existing arrays for forward entries
     
@@ -638,8 +823,13 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: PipelineConfig):
     
     logger.info(f"Processing {count:,} forward entries")
     
-    pk = config.primary_key
-    history_len = config.history_length
+    pk = config['primary_column']
+    prt = config['partition_column']
+    ts = config['max_identifier_column']
+    latest_summary_table = config['latest_history_table']
+    history_len = get_history_length(config)
+    rolling_columns = config.get('rolling_columns', [])
+    grid_columns = config.get('grid_columns', [])
     
     # Get affected accounts
     affected_keys = case_ii_df.select(pk).distinct()
@@ -649,7 +839,7 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: PipelineConfig):
     logger.info(f"Loading latest summary for {affected_count:,} accounts")
     
     # Select needed columns from latest summary
-    history_cols = [config.get_history_col_name(rc['name']) for rc in config.rolling_columns]
+    history_cols = [get_history_col_name(rc['name']) for rc in rolling_columns]
     
     # =========================================================================
     # OPTIMIZATION v9.3: Push filter down for Iceberg data file pruning
@@ -661,12 +851,12 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: PipelineConfig):
     affected_keys.createOrReplaceTempView("case_ii_affected_keys")
     
     # Build column list
-    cols_select = ", ".join([pk, config.partition_key] + history_cols)
+    cols_select = ", ".join([pk, prt] + history_cols)
     
     # Use SQL with subquery - allows Iceberg to apply filter during scan
     latest_for_affected_sql = f"""
         SELECT {cols_select}
-        FROM {config.latest_summary_table} s
+        FROM {latest_summary_table} s
         WHERE s.{pk} IN (SELECT {pk} FROM case_ii_affected_keys)
     """
     
@@ -679,13 +869,15 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: PipelineConfig):
     
     # Build SQL for array shifting
     shift_exprs = []
-    for rc in config.rolling_columns:
-        array_name = config.get_history_col_name(rc['name'])
-        src_col = rc['source_column']
+    for rc in rolling_columns:
+        array_name = get_history_col_name(rc['name'])
+        # Use 'mapper_column' to match original format
+        src_col = rc.get('mapper_column', rc.get('source_column', rc['name']))
         mapper_expr = rc.get('mapper_expr', src_col)
         
         # Use prepared column if available
-        value_col = f"_prepared_{src_col}" if f"_prepared_{src_col}" in case_ii_df.columns else src_col
+        prepared_col = f"_prepared_{rc['name']}"
+        value_col = prepared_col if prepared_col in case_ii_df.columns else src_col
         
         shift_expr = f"""
             CASE
@@ -725,10 +917,12 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: PipelineConfig):
     result = spark.sql(sql)
     
     # Generate grid columns
-    for gc in config.grid_columns:
-        source_history = gc['source_history']
+    for gc in grid_columns:
+        # Use 'mapper_rolling_column' to match original format
+        source_rolling = gc.get('mapper_rolling_column', gc.get('source_history', ''))
+        source_history = get_history_col_name(source_rolling)
         placeholder = gc.get('placeholder', '?')
-        separator = gc.get('separator', '')
+        separator = gc.get('seperator', gc.get('separator', ''))
         
         result = result.withColumn(
             gc['name'],
@@ -749,7 +943,7 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: PipelineConfig):
 # STEP 4: PROCESS CASE III (BACKFILL) - FIXED VERSION
 # ============================================================================
 
-def process_case_iii(spark: SparkSession, case_iii_df, config: PipelineConfig):
+def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
     """
     Process Case III - rebuild history arrays for backfill
     
@@ -775,10 +969,16 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: PipelineConfig):
     
     logger.info(f"Processing {count:,} backfill records")
     
-    pk = config.primary_key
-    prt = config.partition_key
-    ts = config.timestamp_key
-    history_len = config.history_length
+    pk = config['primary_column']
+    prt = config['partition_column']
+    ts = config['max_identifier_column']
+    summary_table = config['destination_table']
+    history_len = get_history_length(config)
+    rolling_columns = config.get('rolling_columns', [])
+    grid_columns = config.get('grid_columns', [])
+    broadcast_threshold = get_broadcast_threshold(config)
+    cache_level = get_cache_level(config)
+    summary_columns = config.get('summary_columns', [])
     
     # Get affected accounts
     affected_accounts = case_iii_df.select(pk).distinct()
@@ -836,18 +1036,18 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: PipelineConfig):
     logger.info(f"Reading summary partitions from {earliest_partition} to {latest_partition}")
     
     # Load history columns list
-    history_cols = [config.get_history_col_name(rc['name']) for rc in config.rolling_columns]
+    history_cols = [get_history_col_name(rc['name']) for rc in rolling_columns]
     
     # Build select for summary - include all columns we need
     summary_select_cols = [pk, prt, ts] + history_cols
     
     # Get available columns from summary table schema (without reading data)
-    summary_schema = spark.read.table(config.summary_table).schema
+    summary_schema = spark.read.table(summary_table).schema
     available_summary_cols = [f.name for f in summary_schema.fields]
     
     # Add any scalar columns from summary_columns config that exist
     scalar_cols = []
-    for col in config.summary_columns:
+    for col in summary_columns:
         if col in available_summary_cols and col not in summary_select_cols and not col.endswith('_history'):
             scalar_cols.append(col)
             summary_select_cols.append(col)
@@ -857,7 +1057,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: PipelineConfig):
     # we use SQL with partition filter to leverage Iceberg's partition pruning
     partition_filter_sql = f"""
         SELECT {', '.join([c for c in summary_select_cols if c in available_summary_cols])}
-        FROM {config.summary_table}
+        FROM {summary_table}
         WHERE {prt} >= '{earliest_partition}' AND {prt} <= '{latest_partition}'
     """
     summary_df = spark.sql(partition_filter_sql)
@@ -865,7 +1065,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: PipelineConfig):
     logger.info(f"Applied partition filter: {prt} BETWEEN '{earliest_partition}' AND '{latest_partition}'")
     
     # Filter to affected accounts (use broadcast if small)
-    if affected_count < config.broadcast_threshold:
+    if affected_count < broadcast_threshold:
         summary_filtered = summary_df.join(
             F.broadcast(affected_accounts),
             pk,
@@ -913,11 +1113,12 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: PipelineConfig):
     
     # Build expressions for creating new summary row
     new_row_exprs = []
-    for rc in config.rolling_columns:
-        array_name = config.get_history_col_name(rc['name'])
-        src_col = rc['source_column']
+    for rc in rolling_columns:
+        array_name = get_history_col_name(rc['name'])
+        src_col = rc.get('mapper_column', rc.get('source_column', rc['name']))
         mapper_expr = rc.get('mapper_expr', src_col)
-        value_col = f"_prepared_{src_col}" if f"_prepared_{src_col}" in case_iii_df.columns else src_col
+        prepared_col = f"_prepared_{rc['name']}"
+        value_col = prepared_col if prepared_col in case_iii_df.columns else src_col
         
         new_row_expr = f"""
             CASE
@@ -967,10 +1168,11 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: PipelineConfig):
     
     # Build value column references for backfill
     backfill_value_cols = []
-    for rc in config.rolling_columns:
-        src_col = rc['source_column']
-        value_col = f"_prepared_{src_col}" if f"_prepared_{src_col}" in case_iii_df.columns else src_col
-        backfill_value_cols.append(f'b.{value_col} as backfill_{src_col}')
+    for rc in rolling_columns:
+        src_col = rc.get('mapper_column', rc.get('source_column', rc['name']))
+        prepared_col = f"_prepared_{rc['name']}"
+        value_col = prepared_col if prepared_col in case_iii_df.columns else src_col
+        backfill_value_cols.append(f'b.{value_col} as backfill_{rc["name"]}')
     
     # Join backfill with future summaries
     future_joined = spark.sql(f"""
@@ -991,66 +1193,103 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: PipelineConfig):
           AND ({month_to_int_expr(f"s.{prt}")} - {month_to_int_expr(f"b.{prt}")}) < {history_len}
     """)
     
-    future_joined.persist(config.cache_level)
+    future_joined.persist(cache_level)
     future_count = future_joined.count()
     logger.info(f"Valid future summary updates: {future_count:,}")
+    
+    # Store future_joined data for Part B (direct UPDATE later)
+    # We'll return this separately for the pipeline to handle
+    backfill_updates_df = None
     
     if future_count > 0:
         future_joined.createOrReplaceTempView("future_backfill_joined")
         
-        # Build array update expressions using transform()
+        # =====================================================================
+        # MULTIPLE BACKFILL FIX v9.4.1:
+        # When multiple backfills arrive for the same account in the same batch,
+        # we need to MERGE all their updates into the future summary rows.
+        # 
+        # Strategy:
+        # 1. Collect all (position, value) pairs for each account+month+array
+        # 2. Create a map from positions to values
+        # 3. Apply all updates in one pass using transform()
+        # =====================================================================
+        
+        # First, collect backfill positions and values per account+month
+        # We need to aggregate: for each (pk, summary_month), collect all backfills
+        backfill_collect_cols = [f"backfill_{rc['name']}" for rc in rolling_columns]
+        existing_array_cols = [f"existing_{get_history_col_name(rc['name'])}" for rc in rolling_columns]
+        
+        # Create a struct with position and all backfill values, then collect as array
+        struct_fields = ["backfill_position"] + backfill_collect_cols
+        
+        # For each account+month, collect all backfill structs and the existing arrays
+        # We use first() for existing arrays since they're the same for all rows of same account+month
+        agg_exprs = [
+            F.collect_list(F.struct(*[F.col(c) for c in struct_fields])).alias("backfill_list")
+        ]
+        for rc in rolling_columns:
+            array_name = get_history_col_name(rc['name'])
+            agg_exprs.append(F.first(f"existing_{array_name}").alias(f"existing_{array_name}"))
+        
+        aggregated_df = future_joined.groupBy(pk, "summary_month").agg(*agg_exprs)
+        aggregated_df.createOrReplaceTempView("aggregated_backfills")
+        
+        # Build array update expressions that apply ALL collected backfills
+        # For each position in the array, check if any backfill targets that position
         update_exprs = []
-        for rc in config.rolling_columns:
-            array_name = config.get_history_col_name(rc['name'])
-            src_col = rc['source_column']
+        for rc in rolling_columns:
+            array_name = get_history_col_name(rc['name'])
+            backfill_col = f"backfill_{rc['name']}"
+            
+            # Get the data type for this column (Integer or String)
+            data_type = rc.get('type', rc.get('data_type', 'Integer'))
+            sql_type = 'STRING' if data_type.lower() == 'string' else 'BIGINT'
+            
+            # Use transform with aggregate to check all backfills for this position
+            # For each array element at index i:
+            #   - Check if any backfill has position == i
+            #   - If yes, use that backfill's value; if no, keep original
             update_expr = f"""
                 transform(
                     existing_{array_name},
-                    (x, i) -> IF(i = backfill_position, backfill_{src_col}, x)
+                    (x, i) -> COALESCE(
+                        aggregate(
+                            backfill_list,
+                            CAST(NULL AS {sql_type}),
+                            (acc, b) -> CASE WHEN b.backfill_position = i THEN b.{backfill_col} ELSE acc END
+                        ),
+                        x
+                    )
                 ) as {array_name}
             """
             update_exprs.append(update_expr)
         
-        # Include scalar columns in output
-        scalar_select = ', '.join(scalar_cols) + ',' if scalar_cols else ''
-        
-        # Final SQL for updated future rows
-        updated_futures = spark.sql(f"""
+        # Create DataFrame for backfill updates with all backfills merged
+        backfill_updates_df = spark.sql(f"""
             SELECT 
                 {pk},
                 summary_month as {prt},
-                {scalar_select}
-                {', '.join(update_exprs)},
-                summary_ts as {ts}
-            FROM future_backfill_joined
+                {', '.join(update_exprs)}
+            FROM aggregated_backfills
         """)
         
-        # Group by account+month and keep latest (in case of multiple backfills)
-        window_spec = Window.partitionBy(pk, prt).orderBy(F.col(ts).desc())
-        updated_futures = (
-            updated_futures
-            .withColumn("_rn", F.row_number().over(window_spec))
-            .filter(F.col("_rn") == 1)
-            .drop("_rn")
-        )
-        
-        updated_count = updated_futures.count()
-        logger.info(f"Updated {updated_count:,} future summary rows")
-    else:
-        updated_futures = None
+        updates_after_merge = backfill_updates_df.count()
+        logger.info(f"Prepared {updates_after_merge:,} future summary rows for direct UPDATE (merged from {future_count:,} individual updates)")
     
     future_joined.unpersist()
     
     # =========================================================================
-    # PART C: Combine new rows and updated futures
+    # PART C: Return new backfill rows only (Part B handled separately)
     # =========================================================================
-    logger.info("Part C: Combining new and updated summary rows...")
+    logger.info("Part C: Preparing new backfill rows for temp table...")
     
     # Generate grid columns for new rows
-    for gc in config.grid_columns:
-        source_history = gc['source_history']
+    for gc in grid_columns:
+        source_rolling = gc.get('mapper_rolling_column', gc.get('source_history', ''))
+        source_history = get_history_col_name(source_rolling)
         placeholder = gc.get('placeholder', '?')
-        separator = gc.get('separator', '')
+        separator = gc.get('seperator', gc.get('separator', ''))
         
         new_backfill_rows = new_backfill_rows.withColumn(
             gc['name'],
@@ -1063,14 +1302,15 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: PipelineConfig):
             )
         )
     
-    if updated_futures is not None:
-        # Generate grid columns for updated futures
-        for gc in config.grid_columns:
-            source_history = gc['source_history']
+    # Generate grid columns for backfill_updates_df (for direct UPDATE)
+    if backfill_updates_df is not None:
+        for gc in grid_columns:
+            source_rolling = gc.get('mapper_rolling_column', gc.get('source_history', ''))
+            source_history = get_history_col_name(source_rolling)
             placeholder = gc.get('placeholder', '?')
-            separator = gc.get('separator', '')
+            separator = gc.get('seperator', gc.get('separator', ''))
             
-            updated_futures = updated_futures.withColumn(
+            backfill_updates_df = backfill_updates_df.withColumn(
                 gc['name'],
                 F.concat_ws(
                     separator,
@@ -1080,32 +1320,105 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: PipelineConfig):
                     )
                 )
             )
-        
-        # Union new rows and updated futures
-        result = new_backfill_rows.unionByName(updated_futures, allowMissingColumns=True)
-    else:
-        result = new_backfill_rows
     
-    # Deduplicate - keep only one row per account+month (prefer the one with latest ts)
+    # Deduplicate new backfill rows - keep only one row per account+month
     window_spec = Window.partitionBy(pk, prt).orderBy(F.col(ts).desc())
-    result = (
-        result
+    new_backfill_rows = (
+        new_backfill_rows
         .withColumn("_rn", F.row_number().over(window_spec))
         .filter(F.col("_rn") == 1)
         .drop("_rn")
     )
     
-    total_count = result.count()
-    logger.info(f"Case III complete: {total_count:,} total summary records (new + updated)")
+    new_rows_count = new_backfill_rows.count()
+    updates_count = backfill_updates_df.count() if backfill_updates_df is not None else 0
     
-    return result
+    logger.info(f"Case III Part A complete: {new_rows_count:,} new backfill rows for temp table")
+    logger.info(f"Case III Part B prepared: {updates_count:,} future rows for direct UPDATE")
+    
+    # Return tuple: (new_rows for temp table, updates for direct UPDATE)
+    return (new_backfill_rows, backfill_updates_df)
+
+
+def apply_backfill_updates(spark: SparkSession, backfill_updates_df, config: Dict[str, Any]):
+    """
+    Apply Case III Part B updates directly to the summary table.
+    
+    This function performs a direct UPDATE to existing summary rows,
+    only modifying the rolling arrays + grid + updated_base_ts columns.
+    All other columns remain unchanged.
+    
+    Args:
+        spark: SparkSession
+        backfill_updates_df: DataFrame with updated arrays for future rows
+                            Columns: pk, prt, 7 array columns, 1 grid column
+        config: Config dict
+    
+    Returns:
+        Number of rows updated
+    """
+    if backfill_updates_df is None:
+        logger.info("No backfill updates to apply")
+        return 0
+    
+    update_count = backfill_updates_df.count()
+    if update_count == 0:
+        logger.info("No backfill updates to apply")
+        return 0
+    
+    logger.info("=" * 80)
+    logger.info("STEP: Apply Case III Part B - Direct UPDATE to Summary")
+    logger.info("=" * 80)
+    logger.info(f"Updating {update_count:,} existing summary rows with backfill data")
+    
+    pk = config['primary_column']
+    prt = config['partition_column']
+    summary_table = config['destination_table']
+    rolling_columns = config.get('rolling_columns', [])
+    grid_columns = config.get('grid_columns', [])
+    
+    # Create temp view for the updates
+    backfill_updates_df.createOrReplaceTempView("backfill_updates")
+    
+    # Build the column list for UPDATE SET
+    # Only update: 7 arrays + 1 grid + updated_base_ts
+    update_columns = []
+    
+    # Add rolling array columns
+    for rc in rolling_columns:
+        array_name = get_history_col_name(rc['name'])
+        update_columns.append(f"t.{array_name} = s.{array_name}")
+    
+    # Add grid columns
+    for gc in grid_columns:
+        update_columns.append(f"t.{gc['name']} = s.{gc['name']}")
+    
+    # Add updated_base_ts
+    update_columns.append("t.updated_base_ts = current_timestamp()")
+    
+    update_set_clause = ", ".join(update_columns)
+    
+    # Execute the MERGE (UPDATE only - no INSERT)
+    merge_sql = f"""
+        MERGE INTO {summary_table} t
+        USING backfill_updates s
+        ON t.{pk} = s.{pk} AND t.{prt} = s.{prt}
+        WHEN MATCHED THEN UPDATE SET {update_set_clause}
+    """
+    
+    spark.sql(merge_sql)
+    
+    logger.info(f"Applied backfill updates to {update_count:,} summary rows")
+    logger.info(f"Updated columns: 7 arrays + 1 grid + updated_base_ts")
+    
+    return update_count
 
 
 # ============================================================================
 # STEP 4b: PROCESS CASE IV (BULK HISTORICAL LOAD)
 # ============================================================================
 
-def process_case_iv(spark: SparkSession, case_iv_df, case_i_results, config: PipelineConfig):
+def process_case_iv(spark: SparkSession, case_iv_df, case_i_results, config: Dict[str, Any]):
     """
     Process Case IV - Bulk historical load for new accounts with multiple months
     
@@ -1120,7 +1433,7 @@ def process_case_iv(spark: SparkSession, case_iv_df, case_i_results, config: Pip
         spark: SparkSession
         case_iv_df: DataFrame with Case IV records (subsequent months for new accounts)
         case_i_results: DataFrame with Case I results (first month for each new account)
-        config: PipelineConfig
+        config: Config dict
     
     Returns:
         DataFrame with correctly built summary records
@@ -1136,10 +1449,12 @@ def process_case_iv(spark: SparkSession, case_iv_df, case_i_results, config: Pip
     
     logger.info(f"Processing {count:,} bulk historical records")
     
-    pk = config.primary_key
-    prt = config.partition_key
-    ts = config.timestamp_key
-    history_len = config.history_length
+    pk = config['primary_column']
+    prt = config['partition_column']
+    ts = config['max_identifier_column']
+    history_len = get_history_length(config)
+    rolling_columns = config.get('rolling_columns', [])
+    grid_columns = config.get('grid_columns', [])
     
     # Combine Case I results with Case IV records to build complete history
     # Case I records are the "first month" for each new account
@@ -1169,7 +1484,6 @@ def process_case_iv(spark: SparkSession, case_iv_df, case_i_results, config: Pip
     # We need to include Case I records to build complete history
     logger.info("Building complete history using window functions")
     
-    # Get the min_month for each account (to include first month)
     all_new_account_months = spark.sql(f"""
         SELECT * FROM case_iv_records
     """)
@@ -1224,14 +1538,13 @@ def process_case_iv(spark: SparkSession, case_iv_df, case_i_results, config: Pip
     # Step 1: Build MAP for each column by account
     # MAP_FROM_ENTRIES(COLLECT_LIST(STRUCT(month_int, value)))
     map_build_exprs = []
-    for rc in config.rolling_columns:
+    for rc in rolling_columns:
         col_name = rc['name']
-        src_col = rc['source_column']
+        src_col = rc.get('mapper_column', rc.get('source_column', col_name))
         mapper_expr = rc.get('mapper_expr', src_col)
         
-        value_col = f"_prepared_{src_col}" if mapper_expr != src_col else src_col
-        if value_col not in all_new_account_months.columns:
-            value_col = src_col
+        prepared_col = f"_prepared_{col_name}"
+        value_col = prepared_col if prepared_col in all_new_account_months.columns else src_col
         
         map_build_exprs.append(f"""
             MAP_FROM_ENTRIES(COLLECT_LIST(STRUCT(month_int, {value_col}))) as value_map_{col_name}
@@ -1253,10 +1566,11 @@ def process_case_iv(spark: SparkSession, case_iv_df, case_i_results, config: Pip
     # For each position 0-35, look up value from map using (month_int - position)
     
     array_build_exprs = []
-    for rc in config.rolling_columns:
+    for rc in rolling_columns:
         col_name = rc['name']
-        data_type = rc['data_type']
-        array_name = config.get_history_col_name(col_name)
+        # Use 'type' to match original format (instead of 'data_type')
+        data_type = rc.get('type', rc.get('data_type', 'String'))
+        array_name = get_history_col_name(col_name)
         
         # TRANSFORM generates array by looking up each position
         # Position 0 = current month, Position N = N months ago
@@ -1288,10 +1602,11 @@ def process_case_iv(spark: SparkSession, case_iv_df, case_i_results, config: Pip
     result = spark.sql(final_sql)
     
     # Generate grid columns
-    for gc in config.grid_columns:
-        source_history = gc['source_history']
+    for gc in grid_columns:
+        source_rolling = gc.get('mapper_rolling_column', gc.get('source_history', ''))
+        source_history = get_history_col_name(source_rolling)
         placeholder = gc.get('placeholder', '?')
-        separator = gc.get('separator', '')
+        separator = gc.get('seperator', gc.get('separator', ''))
         
         result = result.withColumn(
             gc['name'],
@@ -1322,7 +1637,40 @@ def process_case_iv(spark: SparkSession, case_iv_df, case_i_results, config: Pip
 # STEP 5: WRITE RESULTS
 # ============================================================================
 
-def write_results(spark: SparkSession, result_df, config: PipelineConfig, 
+def build_merge_clauses(source_cols: list, pk: str, prt: str = None) -> tuple:
+    """
+    Build explicit UPDATE SET and INSERT clauses for MERGE statements.
+    
+    This avoids using 'UPDATE SET *' and 'INSERT *' which require ALL target
+    table columns to exist in the source DataFrame.
+    
+    Args:
+        source_cols: List of columns in the source DataFrame
+        pk: Primary key column name
+        prt: Partition column name (optional)
+        
+    Returns:
+        Tuple of (update_clause, insert_cols, insert_vals)
+    """
+    # Exclude 'rn' if present (used for row_number windowing)
+    cols_for_merge = [c for c in source_cols if c != 'rn']
+    
+    # Build UPDATE SET clause - exclude primary key (and partition for latest_summary)
+    exclude_from_update = {pk}
+    if prt:
+        exclude_from_update.add(prt)
+    
+    update_cols = [c for c in cols_for_merge if c not in exclude_from_update]
+    update_clause = ", ".join([f"t.{c} = s.{c}" for c in update_cols])
+    
+    # Build INSERT clause
+    insert_cols = ", ".join(cols_for_merge)
+    insert_vals = ", ".join([f"s.{c}" for c in cols_for_merge])
+    
+    return update_clause, insert_cols, insert_vals
+
+
+def write_results(spark: SparkSession, result_df, config: Dict[str, Any], 
                   mode: str = "merge"):
     """
     Write results to summary and latest_summary tables
@@ -1338,13 +1686,19 @@ def write_results(spark: SparkSession, result_df, config: PipelineConfig,
     logger.info("STEP 3: Write Results")
     logger.info("=" * 80)
     
-    pk = config.primary_key
-    prt = config.partition_key
+    pk = config['primary_column']
+    prt = config['partition_column']
+    ts = config['max_identifier_column']
+    summary_table = config['destination_table']
+    latest_summary_table = config['latest_history_table']
+    summary_columns = config.get('summary_columns', [])
+    latest_summary_columns = config.get('latest_summary_columns', 
+                                        config.get('latest_history_addon_cols', []))
     
     # Select only columns that should go to summary table
-    if config.summary_columns:
+    if summary_columns:
         available_cols = result_df.columns
-        summary_cols = [c for c in config.summary_columns if c in available_cols]
+        summary_cols = [c for c in summary_columns if c in available_cols]
         result_for_summary = result_df.select(*summary_cols)
     else:
         result_for_summary = result_df
@@ -1353,20 +1707,32 @@ def write_results(spark: SparkSession, result_df, config: PipelineConfig,
     count = result_for_summary.count()
     
     if mode == "merge":
-        # MERGE to summary table
-        logger.info(f"Merging {count:,} records to {config.summary_table}")
+        # MERGE to summary table using explicit column lists
+        # This avoids errors when source doesn't have all target table columns
+        logger.info(f"Merging {count:,} records to {summary_table}")
+        
+        summary_source_cols = result_for_summary.columns
+        summary_update, summary_insert_cols, summary_insert_vals = build_merge_clauses(
+            summary_source_cols, pk, prt
+        )
+        
         spark.sql(f"""
-            MERGE INTO {config.summary_table} t
+            MERGE INTO {summary_table} t
             USING pipeline_result s
             ON t.{pk} = s.{pk} AND t.{prt} = s.{prt}
-            WHEN MATCHED THEN UPDATE SET *
-            WHEN NOT MATCHED THEN INSERT *
+            WHEN MATCHED THEN UPDATE SET {summary_update}
+            WHEN NOT MATCHED THEN INSERT ({summary_insert_cols}) VALUES ({summary_insert_vals})
         """)
         
         # Prepare data for latest_summary
-        if config.latest_summary_columns:
+        if latest_summary_columns:
             available_cols = result_df.columns
-            latest_cols = [c for c in config.latest_summary_columns if c in available_cols]
+            latest_cols = [c for c in latest_summary_columns if c in available_cols]
+            # Always include primary key and partition
+            if pk not in latest_cols:
+                latest_cols.insert(0, pk)
+            if prt not in latest_cols:
+                latest_cols.insert(1, prt)
             result_for_latest = result_df.select(*latest_cols)
         else:
             result_for_latest = result_df
@@ -1374,9 +1740,20 @@ def write_results(spark: SparkSession, result_df, config: PipelineConfig,
         result_for_latest.createOrReplaceTempView("pipeline_result_latest")
         
         # MERGE to latest_summary (keep only latest per account)
-        logger.info(f"Updating {config.latest_summary_table}")
+        # Uses explicit column lists to avoid column resolution errors
+        logger.info(f"Updating {latest_summary_table}")
+        
+        # Get columns from the result_for_latest DataFrame
+        latest_source_cols = result_for_latest.columns
+        # For latest_summary, we only use pk in ON clause (no prt in match condition)
+        # IMPORTANT: Pass None for prt so that rpt_as_of_mo IS included in UPDATE clause
+        # (latest_summary needs to update the month when a newer entry arrives)
+        latest_update, latest_insert_cols, latest_insert_vals = build_merge_clauses(
+            latest_source_cols, pk, None  # Don't exclude prt - it must be updated
+        )
+        
         spark.sql(f"""
-            MERGE INTO {config.latest_summary_table} t
+            MERGE INTO {latest_summary_table} t
             USING (
                 SELECT * FROM (
                     SELECT *, ROW_NUMBER() OVER (PARTITION BY {pk} ORDER BY {prt} DESC) as rn
@@ -1384,13 +1761,13 @@ def write_results(spark: SparkSession, result_df, config: PipelineConfig,
                 ) WHERE rn = 1
             ) s
             ON t.{pk} = s.{pk}
-            WHEN MATCHED AND s.{prt} >= t.{prt} THEN UPDATE SET *
-            WHEN NOT MATCHED THEN INSERT *
+            WHEN MATCHED AND s.{prt} >= t.{prt} THEN UPDATE SET {latest_update}
+            WHEN NOT MATCHED THEN INSERT ({latest_insert_cols}) VALUES ({latest_insert_vals})
         """)
     else:
         # Overwrite mode
-        logger.info(f"Writing {count:,} records to {config.summary_table}")
-        result_for_summary.writeTo(config.summary_table).using("iceberg").createOrReplace()
+        logger.info(f"Writing {count:,} records to {summary_table}")
+        result_for_summary.writeTo(summary_table).using("iceberg").createOrReplace()
     
     logger.info(f"Write complete: {count:,} records")
     return count
@@ -1400,10 +1777,232 @@ def write_results(spark: SparkSession, result_df, config: PipelineConfig,
 # MAIN PIPELINE
 # ============================================================================
 
-def run_pipeline(spark: SparkSession, config: PipelineConfig, 
+def run_pipeline(spark: SparkSession, config: Dict[str, Any], 
                  filter_expr: str = None) -> Dict[str, Any]:
     """
-    Main pipeline execution
+    Main pipeline execution with TEMP TABLE approach.
+    
+    VERSION 9.4: Uses temp table to break Spark lineage and improve performance.
+    
+    Benefits of temp table approach:
+    - Breaks complex DAG lineage (prevents driver OOM)
+    - Implicit checkpointing per case
+    - Memory released after each case write
+    - Easier debugging (can query temp table)
+    - Fault tolerance (partial progress preserved)
+    
+    Processing Order (CRITICAL for correctness):
+    1. Backfill FIRST (rebuilds history with corrections)
+    2. New accounts SECOND (no dependencies)
+    3. Bulk Historical THIRD (builds arrays for new multi-month accounts)
+    4. Forward LAST (uses corrected history from backfill)
+    
+    Args:
+        spark: SparkSession
+        config: Config dict
+        filter_expr: Optional SQL filter for accounts table
+    
+    Returns:
+        Dict with processing statistics
+    """
+    start_time = time.time()
+    
+    pk = config['primary_column']
+    prt = config['partition_column']
+    ts = config['max_identifier_column']
+    
+    logger.info("=" * 80)
+    logger.info("SUMMARY PIPELINE V9.4 - TEMP TABLE OPTIMIZED - START")
+    logger.info("=" * 80)
+    
+    stats = {
+        'total_records': 0,
+        'case_i_records': 0,
+        'case_ii_records': 0,
+        'case_iii_records': 0,
+        'case_iv_records': 0,
+        'records_written': 0,
+        'temp_table': None
+    }
+    
+    # Generate unique temp table name
+    temp_table_name = generate_temp_table_name(config)
+    stats['temp_table'] = temp_table_name
+    logger.info(f"Using temp table: {temp_table_name}")
+    
+    try:
+        # Step 1: Load and classify
+        classified = load_and_classify_accounts(spark, config, filter_expr)
+        
+        # Get counts
+        case_counts = classified.groupBy("case_type").count().collect()
+        case_dict = {row["case_type"]: row["count"] for row in case_counts}
+        stats['case_i_records'] = case_dict.get('CASE_I', 0)
+        stats['case_ii_records'] = case_dict.get('CASE_II', 0)
+        stats['case_iii_records'] = case_dict.get('CASE_III', 0)
+        stats['case_iv_records'] = case_dict.get('CASE_IV', 0)
+        stats['total_records'] = sum(case_dict.values())
+        
+        if stats['total_records'] == 0:
+            logger.info("No records to process")
+            return stats
+        
+        # Configure partitions based on total records
+        num_partitions = calculate_partitions(stats['total_records'], config)
+        configure_spark(spark, num_partitions, config)
+        logger.info(f"Configured {num_partitions} partitions for {stats['total_records']:,} records")
+        
+        # =========================================================================
+        # STEP 2: CREATE TEMP TABLE
+        # =========================================================================
+        logger.info("=" * 80)
+        logger.info("STEP 2: Create Temp Table")
+        logger.info("=" * 80)
+        create_temp_table(spark, temp_table_name, config)
+        
+        # =========================================================================
+        # STEP 3: PROCESS EACH CASE AND WRITE TO TEMP TABLE
+        # Each case writes to temp table, breaking lineage automatically
+        # =========================================================================
+        
+        # Track records written to temp table
+        temp_records = 0
+        
+        # Store backfill updates for Part B (direct UPDATE after main MERGE)
+        backfill_updates_df = None
+        
+        # Process in CORRECT order: Backfill -> New -> Bulk Historical -> Forward
+        
+        # 3a. Process Case III (Backfill) - HIGHEST PRIORITY
+        # Returns tuple: (new_rows for temp table, updates for direct UPDATE)
+        case_iii_df = classified.filter(F.col("case_type") == "CASE_III")
+        case_iii_result = None
+        if stats['case_iii_records'] > 0:
+            logger.info(f"\n>>> PROCESSING BACKFILL ({stats['case_iii_records']:,} records)")
+            case_iii_output = process_case_iii(spark, case_iii_df, config)
+            if case_iii_output is not None:
+                case_iii_result, backfill_updates_df = case_iii_output
+                if case_iii_result is not None:
+                    case_iii_result = case_iii_result.withColumn("_case_type", F.lit("CASE_III"))
+                    temp_records += write_to_temp_table(spark, case_iii_result, temp_table_name, "CASE_III")
+        
+        # 3b. Process Case I (New Accounts - first month only)
+        case_i_df = classified.filter(F.col("case_type") == "CASE_I")
+        case_i_result = None
+        if stats['case_i_records'] > 0:
+            logger.info(f"\n>>> PROCESSING NEW ACCOUNTS ({stats['case_i_records']:,} records)")
+            case_i_result = process_case_i(case_i_df, config)
+            if case_i_result is not None:
+                case_i_result = case_i_result.withColumn("_case_type", F.lit("CASE_I"))
+                temp_records += write_to_temp_table(spark, case_i_result, temp_table_name, "CASE_I")
+        
+        # 3c. Process Case IV (Bulk Historical) - after Case I so we have first months
+        case_iv_df = classified.filter(F.col("case_type") == "CASE_IV")
+        if stats['case_iv_records'] > 0:
+            logger.info(f"\n>>> PROCESSING BULK HISTORICAL ({stats['case_iv_records']:,} records)")
+            case_iv_result = process_case_iv(spark, case_iv_df, case_i_result, config)
+            if case_iv_result is not None:
+                case_iv_result = case_iv_result.withColumn("_case_type", F.lit("CASE_IV"))
+                temp_records += write_to_temp_table(spark, case_iv_result, temp_table_name, "CASE_IV")
+        
+        # 3d. Process Case II (Forward Entries) - LOWEST PRIORITY
+        case_ii_df = classified.filter(F.col("case_type") == "CASE_II")
+        if stats['case_ii_records'] > 0:
+            logger.info(f"\n>>> PROCESSING FORWARD ENTRIES ({stats['case_ii_records']:,} records)")
+            case_ii_result = process_case_ii(spark, case_ii_df, config)
+            if case_ii_result is not None:
+                case_ii_result = case_ii_result.withColumn("_case_type", F.lit("CASE_II"))
+                temp_records += write_to_temp_table(spark, case_ii_result, temp_table_name, "CASE_II")
+        
+        logger.info(f"\nTotal records in temp table: {temp_records:,}")
+        
+        # =========================================================================
+        # STEP 4: READ FROM TEMP TABLE, DEDUPLICATE, AND MERGE
+        # This is now a CLEAN operation with no complex lineage
+        # =========================================================================
+        if temp_records > 0:
+            logger.info("=" * 80)
+            logger.info("STEP 4: Read Temp Table and Merge to Summary")
+            logger.info("=" * 80)
+            
+            # Read from temp table (clean lineage!)
+            combined_result = spark.table(temp_table_name)
+            
+            # Deduplicate - if same account+month appears multiple times, keep the one
+            # from the highest priority case type (III > I > IV > II)
+            # This handles edge cases where backfill might create a row that's also in Case I
+            
+            # Define case priority (lower = higher priority)
+            combined_result = combined_result.withColumn(
+                "_case_priority",
+                F.when(F.col("_case_type") == "CASE_III", F.lit(1))
+                .when(F.col("_case_type") == "CASE_I", F.lit(2))
+                .when(F.col("_case_type") == "CASE_IV", F.lit(3))
+                .when(F.col("_case_type") == "CASE_II", F.lit(4))
+                .otherwise(F.lit(99))
+            )
+            
+            # Deduplicate by account+month, keeping highest priority
+            window_spec = Window.partitionBy(pk, prt).orderBy(F.col("_case_priority").asc())
+            combined_result = (
+                combined_result
+                .withColumn("_rn", F.row_number().over(window_spec))
+                .filter(F.col("_rn") == 1)
+                .drop("_rn", "_case_type", "_case_priority")
+            )
+            
+            stats['records_written'] = write_results(spark, combined_result, config)
+            
+            # =========================================================================
+            # STEP 5: Apply Case III Part B - Direct UPDATE to existing summary rows
+            # This must happen AFTER the main MERGE to avoid conflicts
+            # =========================================================================
+            if backfill_updates_df is not None:
+                stats['backfill_updates'] = apply_backfill_updates(spark, backfill_updates_df, config)
+            else:
+                stats['backfill_updates'] = 0
+        
+        # Cleanup classified DataFrame
+        classified.unpersist()
+        
+        end_time = time.time()
+        duration = (end_time - start_time) / 60
+        
+        logger.info("=" * 80)
+        logger.info("SUMMARY PIPELINE V9.4 - COMPLETED SUCCESSFULLY")
+        logger.info("=" * 80)
+        logger.info(f"Total records:      {stats['total_records']:,}")
+        logger.info(f"  Case I (new):     {stats['case_i_records']:,}")
+        logger.info(f"  Case II (fwd):    {stats['case_ii_records']:,}")
+        logger.info(f"  Case III (bkfl):  {stats['case_iii_records']:,}")
+        logger.info(f"  Case IV (bulk):   {stats['case_iv_records']:,}")
+        logger.info(f"Records written:    {stats['records_written']:,}")
+        logger.info(f"Backfill updates:   {stats.get('backfill_updates', 0):,}")
+        logger.info(f"Duration:           {duration:.2f} minutes")
+        logger.info("=" * 80)
+        
+        stats['duration_minutes'] = duration
+        return stats
+    
+    except Exception as e:
+        logger.error(f"Pipeline failed: {e}", exc_info=True)
+        raise
+    
+    finally:
+        # ALWAYS cleanup temp table
+        logger.info("-" * 40)
+        logger.info("Cleaning up...")
+        drop_temp_table(spark, temp_table_name, purge=True)
+        spark.catalog.clearCache()
+
+
+def run_pipeline_legacy(spark: SparkSession, config: Dict[str, Any], 
+                        filter_expr: str = None) -> Dict[str, Any]:
+    """
+    Legacy pipeline execution (v9.3) - uses in-memory union instead of temp table.
+    
+    Kept for backwards compatibility and comparison testing.
+    Use run_pipeline() for production.
     
     Processing Order (CRITICAL for correctness):
     1. Backfill FIRST (rebuilds history with corrections)
@@ -1412,7 +2011,7 @@ def run_pipeline(spark: SparkSession, config: PipelineConfig,
     
     Args:
         spark: SparkSession
-        config: PipelineConfig
+        config: Config dict
         filter_expr: Optional SQL filter for accounts table
     
     Returns:
@@ -1420,8 +2019,12 @@ def run_pipeline(spark: SparkSession, config: PipelineConfig,
     """
     start_time = time.time()
     
+    pk = config['primary_column']
+    prt = config['partition_column']
+    ts = config['max_identifier_column']
+    
     logger.info("=" * 80)
-    logger.info("SUMMARY PIPELINE V9.3 OPTIMIZED - START")
+    logger.info("SUMMARY PIPELINE V9.3 LEGACY - START")
     logger.info("=" * 80)
     
     stats = {
@@ -1459,17 +2062,23 @@ def run_pipeline(spark: SparkSession, config: PipelineConfig,
         # =========================================================================
         all_results = []
         
+        # Store backfill updates for Part B (direct UPDATE after main MERGE)
+        backfill_updates_df = None
+        
         # Process in CORRECT order: Backfill -> New -> Bulk Historical -> Forward
         
         # 1. Process Case III (Backfill) - HIGHEST PRIORITY
+        # Returns tuple: (new_rows, updates for direct UPDATE)
         case_iii_df = classified.filter(F.col("case_type") == "CASE_III")
         case_iii_result = None
         if stats['case_iii_records'] > 0:
             logger.info(f"\n>>> PROCESSING BACKFILL ({stats['case_iii_records']:,} records)")
-            case_iii_result = process_case_iii(spark, case_iii_df, config)
-            if case_iii_result is not None:
-                case_iii_result = case_iii_result.withColumn("_case_type", F.lit("CASE_III"))
-                all_results.append(case_iii_result)
+            case_iii_output = process_case_iii(spark, case_iii_df, config)
+            if case_iii_output is not None:
+                case_iii_result, backfill_updates_df = case_iii_output
+                if case_iii_result is not None:
+                    case_iii_result = case_iii_result.withColumn("_case_type", F.lit("CASE_III"))
+                    all_results.append(case_iii_result)
         
         # 2. Process Case I (New Accounts - first month only)
         case_i_df = classified.filter(F.col("case_type") == "CASE_I")
@@ -1515,9 +2124,6 @@ def run_pipeline(spark: SparkSession, config: PipelineConfig,
             # Deduplicate - if same account+month appears multiple times, keep the one
             # from the highest priority case type (III > I > IV > II)
             # This handles edge cases where backfill might create a row that's also in Case I
-            pk = config.primary_key
-            prt = config.partition_key
-            ts = config.timestamp_key
             
             # Define case priority (lower = higher priority)
             combined_result = combined_result.withColumn(
@@ -1539,6 +2145,15 @@ def run_pipeline(spark: SparkSession, config: PipelineConfig,
             )
             
             stats['records_written'] = write_results(spark, combined_result, config)
+            
+            # =========================================================================
+            # Apply Case III Part B - Direct UPDATE to existing summary rows
+            # This must happen AFTER the main MERGE to avoid conflicts
+            # =========================================================================
+            if backfill_updates_df is not None:
+                stats['backfill_updates'] = apply_backfill_updates(spark, backfill_updates_df, config)
+            else:
+                stats['backfill_updates'] = 0
         
         # Cleanup
         classified.unpersist()
@@ -1547,7 +2162,7 @@ def run_pipeline(spark: SparkSession, config: PipelineConfig,
         duration = (end_time - start_time) / 60
         
         logger.info("=" * 80)
-        logger.info("SUMMARY PIPELINE V9.3 - COMPLETED")
+        logger.info("SUMMARY PIPELINE V9.3 LEGACY - COMPLETED")
         logger.info("=" * 80)
         logger.info(f"Total records:      {stats['total_records']:,}")
         logger.info(f"  Case I (new):     {stats['case_i_records']:,}")
@@ -1573,10 +2188,11 @@ def run_pipeline(spark: SparkSession, config: PipelineConfig,
 # SPARK SESSION CREATION
 # ============================================================================
 
-def create_spark_session(config: PipelineConfig) -> SparkSession:
+def create_spark_session(config: Dict[str, Any]) -> SparkSession:
     """Create and configure Spark session with optimal settings"""
     
-    app_name = config.spark_config.get('app_name', 'SummaryPipeline_v9_fixed')
+    spark_config = config.get('spark', {})
+    app_name = spark_config.get('app_name', 'SummaryPipeline_v9.3')
     
     builder = SparkSession.builder \
         .appName(app_name) \
@@ -1592,27 +2208,27 @@ def create_spark_session(config: PipelineConfig) -> SparkSession:
         .config("spark.sql.autoBroadcastJoinThreshold", "500m") \
         .enableHiveSupport()
     
-    # Add catalog config
-    if config.catalog:
-        cat = config.catalog
-        cat_name = cat.get('name', 'primary_catalog')
+    # Add catalog config if present
+    catalog = config.get('catalog', {})
+    if catalog:
+        cat_name = catalog.get('name', 'primary_catalog')
         builder = builder \
             .config("spark.sql.defaultCatalog", cat_name) \
             .config(f"spark.sql.catalog.{cat_name}", "org.apache.iceberg.spark.SparkCatalog") \
             .config(f"spark.sql.catalog.{cat_name}.catalog-impl", 
                    "org.apache.iceberg.aws.glue.GlueCatalog") \
-            .config(f"spark.sql.catalog.{cat_name}.warehouse", cat.get('warehouse', '')) \
+            .config(f"spark.sql.catalog.{cat_name}.warehouse", catalog.get('warehouse', '')) \
             .config(f"spark.sql.catalog.{cat_name}.io-impl", 
-                   cat.get('io_impl', 'org.apache.iceberg.aws.s3.S3FileIO'))
+                   catalog.get('io_impl', 'org.apache.iceberg.aws.s3.S3FileIO'))
     
     # Add dynamic allocation if configured
-    if config.spark_config.get('dynamic_allocation', {}).get('enabled', False):
-        dyn = config.spark_config['dynamic_allocation']
+    dyn_alloc = spark_config.get('dynamic_allocation', {})
+    if dyn_alloc.get('enabled', False):
         builder = builder \
             .config("spark.dynamicAllocation.enabled", "true") \
-            .config("spark.dynamicAllocation.minExecutors", str(dyn.get('min_executors', 50))) \
-            .config("spark.dynamicAllocation.maxExecutors", str(dyn.get('max_executors', 250))) \
-            .config("spark.dynamicAllocation.initialExecutors", str(dyn.get('initial_executors', 100)))
+            .config("spark.dynamicAllocation.minExecutors", str(dyn_alloc.get('min_executors', 50))) \
+            .config("spark.dynamicAllocation.maxExecutors", str(dyn_alloc.get('max_executors', 250))) \
+            .config("spark.dynamicAllocation.initialExecutors", str(dyn_alloc.get('initial_executors', 100)))
     
     return builder.getOrCreate()
 
@@ -1623,17 +2239,40 @@ def create_spark_session(config: PipelineConfig) -> SparkSession:
 
 def main():
     """Main entry point"""
-    parser = argparse.ArgumentParser(description="Summary Pipeline v9.1 FIXED")
+    parser = argparse.ArgumentParser(
+        description="Summary Pipeline v9.4 - Temp Table Optimized",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run pipeline with temp table (default, recommended)
+  python summary_pipeline.py --config config.json
+
+  # Run legacy pipeline (in-memory union)
+  python summary_pipeline.py --config config.json --legacy
+
+  # Cleanup orphaned temp tables from failed runs
+  python summary_pipeline.py --config config.json --cleanup-orphans
+
+  # Cleanup with custom max age
+  python summary_pipeline.py --config config.json --cleanup-orphans --max-age-hours 48
+        """
+    )
     parser.add_argument('--config', required=True, help='Path to pipeline config JSON')
     parser.add_argument('--filter', help='SQL filter expression for accounts')
     parser.add_argument('--mode', choices=['incremental', 'full'], default='incremental',
                        help='Processing mode')
+    parser.add_argument('--legacy', action='store_true',
+                       help='Use legacy v9.3 pipeline (in-memory union instead of temp table)')
+    parser.add_argument('--cleanup-orphans', action='store_true',
+                       help='Cleanup orphaned temp tables from failed runs and exit')
+    parser.add_argument('--max-age-hours', type=int, default=24,
+                       help='Max age in hours for orphaned temp tables (default: 24)')
     
     args = parser.parse_args()
     
-    # Create config
-    config = PipelineConfig(args.config)
-    if not config.validate():
+    # Load config as plain dict
+    config = load_config(args.config)
+    if not validate_config(config):
         sys.exit(1)
     
     # Create Spark session
@@ -1641,8 +2280,23 @@ def main():
     spark.sparkContext.setLogLevel("WARN")
     
     try:
-        stats = run_pipeline(spark, config, args.filter)
+        # Cleanup orphans mode
+        if args.cleanup_orphans:
+            logger.info(f"Cleaning up orphaned temp tables older than {args.max_age_hours} hours...")
+            cleaned = cleanup_orphaned_temp_tables(spark, config, args.max_age_hours)
+            logger.info(f"Cleanup complete: removed {cleaned} orphaned temp tables")
+            return
+        
+        # Run pipeline
+        if args.legacy:
+            logger.info("Using LEGACY pipeline (v9.3 in-memory union)")
+            stats = run_pipeline_legacy(spark, config, args.filter)
+        else:
+            logger.info("Using TEMP TABLE pipeline (v9.4)")
+            stats = run_pipeline(spark, config, args.filter)
+        
         logger.info(f"Pipeline completed: {stats}")
+        
     except Exception as e:
         logger.error(f"Pipeline failed: {e}")
         sys.exit(1)
