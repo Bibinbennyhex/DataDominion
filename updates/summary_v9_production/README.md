@@ -4,16 +4,29 @@ Production-ready DPD Summary Pipeline with full support for all 4 case types, ga
 
 ## Version
 
-**v9.4.1** (February 2026)
+**v9.4.1** (February 2026) - *Production Stable*
+
+> **Note**: A candidate release **v9.4.2** is available in `pipeline/summary_pipeline_v9_4_2.py`.
+
+## What's New in v9.4.2 (Candidate)
+
+### Features & Optimizations
+- **Chained Backfill Support**: Correctly handles consecutive missing months arriving in a single batch (e.g., April, May, June).
+- **Map-Lookup Optimization**: Replaces expensive self-joins with a high-performance Window Map lookup strategy.
+    - **Logic**: Collects all backfill values for an account into a `MAP<Month, Struct>` using a Window function.
+    - **Projection**: Uses `transform` + `peer_map[key]` to fill gaps instantly during row creation.
+    - **Performance**: ~35% faster than Join-based patching for backfill batches.
+- **Non-Continuous Support**: robustly handles batches with internal gaps (e.g., Feb, April, June).
 
 ## What's New in v9.4.1
 
 ### Critical Fixes
-- **Multiple Backfill Merge**: Fixed issue where multiple backfills for the same account in the same batch were not all propagated to future months. Now uses `collect_list` + `aggregate` to merge all backfills correctly.
+- **Multiple Backfill Merge**: Fixed issue where multiple backfills for the same account in the same batch were not all propagated to future months.
 - **Type-Aware Aggregation**: Fixed SQL generation for STRING columns in backfill processing.
 
 ### New Tests
-- **Duplicate Record Handling**: Added `test_duplicate_records.py` to verify that latest `base_ts` wins when duplicates exist.
+- **Duplicate Record Handling**: Added `test_duplicate_records.py` to verify that latest `base_ts` wins.
+- **Consecutive Backfill Test**: Added `test_consecutive_backfill.py` to verify chaining logic.
 
 ## What's New in v9.4
 

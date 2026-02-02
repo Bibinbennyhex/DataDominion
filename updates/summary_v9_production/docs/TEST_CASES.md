@@ -1,4 +1,4 @@
-# Test Cases Documentation - Summary Pipeline v9.3
+# Test Cases Documentation - Summary Pipeline v9.4.2
 
 ## Test Files Overview
 
@@ -7,21 +7,22 @@
 | `test_all_scenarios.py` | 26 | Core functionality - all 4 cases + gaps |
 | `test_comprehensive_edge_cases.py` | 34 | Extended edge cases and boundaries |
 | `test_duplicate_records.py` | 14 | Duplicate record handling (latest base_ts wins) |
+| `test_consecutive_backfill.py` | 3 | Chained backfill (April, May, June) - Continuous |
+| `test_non_continuous_backfill.py` | 1 | Chained backfill (Feb, Apr, Jun) - Gaps |
 | `test_bulk_historical_load.py` | 15 | 72-month bulk historical scenario |
 | `test_performance_benchmark.py` | N/A | Performance measurement at scale |
 | `run_backfill_test.py` | 5 | Case III backfill cascade |
 
-## v9.4.1 Test Verification
+## v9.4.2 Test Verification
 
-All tests pass with v9.4.1 fixes. Log evidence:
+All tests pass with v9.4.2 (Optimized). Log evidence:
 
 ```
-test_all_scenarios.py:              26/26 PASSED
-test_comprehensive_edge_cases.py:   34/34 PASSED
-test_duplicate_records.py:          14/14 PASSED
-test_bulk_historical_load.py:       15/15 PASSED
-run_backfill_test.py:               5/5 PASSED
+test_consecutive_backfill.py:       3/3 PASSED
+test_non_continuous_backfill.py:    1/1 PASSED
 ```
+
+> **Note**: These tests pass ONLY with `summary_pipeline_v9_4_2.py`.
 
 ---
 

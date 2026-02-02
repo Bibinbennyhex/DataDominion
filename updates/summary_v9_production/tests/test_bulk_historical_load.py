@@ -232,52 +232,65 @@ def insert_bulk_historical_data(spark, num_months=72):
 def run_pipeline_test(spark):
     """Run the pipeline and capture results"""
     print("\n" + "=" * 80)
-    print("RUNNING PIPELINE v9.1")
+    print("RUNNING PIPELINE v9.4")
     print("=" * 80)
     
     try:
-        from summary_pipeline import run_pipeline, PipelineConfig
+        from summary_pipeline import run_pipeline
     except ImportError as e:
         print(f"Could not import pipeline: {e}")
         print("Make sure summary_pipeline.py is in the path")
         return None
     
-    # Create config for test tables
-    config = PipelineConfig()
-    config.accounts_table = "demo.bulk_test.accounts"
-    config.summary_table = "demo.bulk_test.summary"
-    config.latest_summary_table = "demo.bulk_test.latest_summary"
-    config.primary_key = "cons_acct_key"
-    config.partition_key = "rpt_as_of_mo"
-    config.timestamp_key = "base_ts"
-    config.history_length = 36
-    
-    # Configure rolling columns
-    config.rolling_columns = [
-        {"name": "balance_am", "source_column": "balance_am", "mapper_expr": "balance_am", "data_type": "Integer"},
-        {"name": "actual_payment_am", "source_column": "actual_payment_am", "mapper_expr": "actual_payment_am", "data_type": "Integer"},
-        {"name": "credit_limit_am", "source_column": "credit_limit_am", "mapper_expr": "credit_limit_am", "data_type": "Integer"},
-        {"name": "past_due_am", "source_column": "past_due_am", "mapper_expr": "past_due_am", "data_type": "Integer"},
-        {"name": "days_past_due", "source_column": "days_past_due", "mapper_expr": "days_past_due", "data_type": "Integer"},
-        {"name": "asset_class_cd", "source_column": "asset_class_cd", "mapper_expr": "asset_class_cd", "data_type": "String"},
-        {"name": "payment_rating_cd", "source_column": "payment_rating_cd", "mapper_expr": "payment_rating_cd", "data_type": "String"}
-    ]
-    
-    config.grid_columns = [
-        {
-            "name": "payment_history_grid",
-            "source_history": "payment_rating_cd_history",
-            "placeholder": "?",
-            "separator": ""
+    # Create config for test tables (v9.4 dict format)
+    config = {
+        "source_table": "demo.bulk_test.accounts",
+        "destination_table": "demo.bulk_test.summary",
+        "latest_history_table": "demo.bulk_test.latest_summary",
+        "primary_column": "cons_acct_key",
+        "partition_column": "rpt_as_of_mo",
+        "max_identifier_column": "base_ts",
+        "history_length": 36,
+        "temp_table_schema": "demo.temp",
+        
+        "rolling_columns": [
+            {"name": "balance_am", "mapper_column": "balance_am", "mapper_expr": "balance_am", "type": "Integer"},
+            {"name": "actual_payment_am", "mapper_column": "actual_payment_am", "mapper_expr": "actual_payment_am", "type": "Integer"},
+            {"name": "credit_limit_am", "mapper_column": "credit_limit_am", "mapper_expr": "credit_limit_am", "type": "Integer"},
+            {"name": "past_due_am", "mapper_column": "past_due_am", "mapper_expr": "past_due_am", "type": "Integer"},
+            {"name": "days_past_due", "mapper_column": "days_past_due", "mapper_expr": "days_past_due", "type": "Integer"},
+            {"name": "asset_class_cd", "mapper_column": "asset_class_cd", "mapper_expr": "asset_class_cd", "type": "String"},
+            {"name": "payment_rating_cd", "mapper_column": "payment_rating_cd", "mapper_expr": "payment_rating_cd", "type": "String"}
+        ],
+        
+        "grid_columns": [
+            {
+                "name": "payment_history_grid",
+                "mapper_rolling_column": "payment_rating_cd",
+                "placeholder": "?",
+                "seperator": ""
+            }
+        ],
+        
+        "columns": {},
+        "column_transformations": [],
+        "inferred_columns": [],
+        "date_col_list": [],
+        "summary_columns": [],
+        "latest_summary_columns": [],
+        
+        "performance": {
+            "broadcast_threshold": 10000000,
+            "min_partitions": 4,
+            "max_partitions": 32,
+            "cache_level": "MEMORY_AND_DISK"
+        },
+        
+        "spark": {
+            "app_name": "bulk_historical_load_test",
+            "adaptive_enabled": True
         }
-    ]
-    
-    config.column_mappings = {}
-    config.column_transformations = []
-    config.inferred_columns = []
-    config.date_columns = []
-    config.summary_columns = []
-    config.latest_summary_columns = []
+    }
     
     try:
         stats = run_pipeline(spark, config)
@@ -288,6 +301,7 @@ def run_pipeline_test(spark):
         print(f"Case I (new):        {stats.get('case_i_records', 0)}")
         print(f"Case II (forward):   {stats.get('case_ii_records', 0)}")
         print(f"Case III (backfill): {stats.get('case_iii_records', 0)}")
+        print(f"Case IV (bulk):      {stats.get('case_iv_records', 0)}")
         print(f"Records written:     {stats.get('records_written', 0)}")
         return stats
     except Exception as e:
