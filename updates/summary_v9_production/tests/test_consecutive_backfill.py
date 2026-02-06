@@ -24,8 +24,8 @@ from pyspark.sql import functions as F
 
 # Add pipeline to path
 sys.path.insert(0, '/home/iceberg/summary_v9_production')
-# IMPORT THE NEW v9.4.2 PIPELINE
-from pipeline.summary_pipeline_v9_4_2 import run_pipeline
+# IMPORT THE PRODUCTION PIPELINE (v9.4.3)
+from pipeline.summary_pipeline import run_pipeline
 
 
 def create_spark_session():

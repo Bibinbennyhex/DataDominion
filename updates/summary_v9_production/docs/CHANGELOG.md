@@ -1,5 +1,29 @@
 # Changelog - Summary Pipeline
 
+## v9.4.3 (February 2026) - Production Patch
+### Critical Fixes
+- **Backfill Chaining (Initial Load)**: Fixed logic gap where backfill batches arriving for accounts with *no prior history* failed to chain consecutive months. Now uses `peer_map` lookup unconditionally.
+- **Double/Decimal Support**: Fixed aggregation type mismatch errors for non-integer rolling columns (Double/Float/Decimal).
+- **Robustness**: Improved date handling in partition logic to support `datetime.date` objects.
+
+## v9.4.2 (February 2026) - Production
+
+### Features & Optimizations
+- **Chained Backfill Support**: Correctly handles consecutive missing months arriving in a single batch (e.g., April, May, June) using Windowed Map-Lookup.
+- **Multi-Forward Chaining**: Correctly handles multiple forward months (Case II) in a single batch.
+- **Map-Lookup Optimization**: Replaces expensive self-joins with a high-performance Window Map lookup strategy.
+    - **Logic**: Collects all batch values for an account into a `MAP<Month, Struct>` using a Window function.
+    - **Projection**: Uses `transform` + `peer_map[key]` to fill gaps instantly during row creation.
+    - **Performance**: ~35% faster than Join-based patching for backfill batches.
+
+### Bug Fixes
+- **Case III Gaps**: Fixed issue where non-continuous backfills (e.g. Feb, April) left gaps in the history chain.
+- **Case II Chaining**: Fixed issue where multiple forward months didn't see each other's updates.
+
+### Status
+- **Verified**: Passed all regression tests (chained backfill, multi-forward, gap handling).
+- **Environment**: Requires healthy Iceberg catalog (restart recommended if ServiceFailureException occurs).
+
 ## v9.4.1 (February 2026)
 
 ### Bug Fix: Multiple Backfills in Same Batch

@@ -15,9 +15,9 @@ July 2025 row should be created with history:
 import sys
 from pyspark.sql import SparkSession
 
-# Use v9.4.3 pipeline (Optimization Test)
+# Use production pipeline (v9.4.3)
 sys.path.insert(0, '/home/iceberg/summary_v9_production')
-from pipeline.summary_pipeline_v9_4_3_opt import run_pipeline
+from pipeline.summary_pipeline import run_pipeline
 
 def create_spark_session():
     return (SparkSession.builder

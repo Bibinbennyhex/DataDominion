@@ -12,11 +12,13 @@ Production-ready DPD Summary Pipeline with full support for all 4 case types, ga
 
 ### Features & Optimizations
 - **Chained Backfill Support**: Correctly handles consecutive missing months arriving in a single batch (e.g., April, May, June).
+- **Multi-Forward Chaining**: Correctly handles multiple forward months (Case II) in a single batch using Map-Lookup.
 - **Map-Lookup Optimization**: Replaces expensive self-joins with a high-performance Window Map lookup strategy.
     - **Logic**: Collects all backfill values for an account into a `MAP<Month, Struct>` using a Window function.
     - **Projection**: Uses `transform` + `peer_map[key]` to fill gaps instantly during row creation.
     - **Performance**: ~35% faster than Join-based patching for backfill batches.
 - **Non-Continuous Support**: robustly handles batches with internal gaps (e.g., Feb, April, June).
+- **Self-Conflict Resolution**: Resolves conflicts when an existing row is both updated (Part B) and replaced (Part A) in the same batch.
 
 ## What's New in v9.4.1
 

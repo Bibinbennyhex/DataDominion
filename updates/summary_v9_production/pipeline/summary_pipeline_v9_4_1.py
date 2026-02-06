@@ -1,16 +1,6 @@
 """
-Summary Pipeline v9.4.3 - Temp Table Optimized Production Implementation
+Summary Pipeline v9.4 - Temp Table Optimized Production Implementation
 =================================================================
-
-VERSION 9.4.3 FIXES (Critical):
-- Fixed Case III gap filling logic: Now attempts peer_map lookup even when no prior existing
-  summary is found. This ensures backfill chains work correctly for initial historical loads.
-- Added Double/Float/Decimal support for array updates (previously defaulted to BIGINT).
-- Improved date handling robustness in backfill range calculation.
-
-VERSION 9.4.2 FIXES:
-- Chained Backfill Support (Case III): Windowed Map-Lookup Optimization
-- Multi-Month Forward Chaining (Case II)
 
 VERSION 9.4 OPTIMIZATIONS:
 - Temp table approach: Breaks Spark lineage for better performance at scale
@@ -873,28 +863,6 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any]):
     logger.info(f"  Using SQL subquery for filter pushdown (Iceberg optimization)")
     latest_for_affected = spark.sql(latest_for_affected_sql)
     
-    # FIX v9.4.5: Collect peer forward entries into MAP for gap filling (Chaining)
-    # Map Key: month_int, Map Value: Struct(val_col1, val_col2...)
-    val_struct_fields = []
-    for rc in rolling_columns:
-        src_col = rc.get('mapper_column', rc.get('source_column', rc['name']))
-        prepared_col = f"_prepared_{rc['name']}"
-        value_col = prepared_col if prepared_col in case_ii_df.columns else src_col
-        val_struct_fields.append(F.col(value_col).alias(f"val_{rc['name']}"))
-        
-    peer_window = Window.partitionBy(pk)
-    case_ii_df = case_ii_df.withColumn(
-        "peer_map", 
-        F.map_from_entries(
-            F.collect_list(
-                F.struct(
-                    F.col("month_int"), 
-                    F.struct(*val_struct_fields)
-                )
-            ).over(peer_window)
-        )
-    )
-    
     # Create temp views for SQL
     case_ii_df.createOrReplaceTempView("case_ii_records")
     latest_for_affected.createOrReplaceTempView("latest_summary_affected")
@@ -910,10 +878,6 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any]):
         # Use prepared column if available
         prepared_col = f"_prepared_{rc['name']}"
         value_col = prepared_col if prepared_col in case_ii_df.columns else src_col
-        val_col_name = f"val_{rc['name']}"
-        
-        # Determine SQL type for CAST(NULL AS type) if needed, but transform handles it via map lookup
-        # transform(sequence(1, gap), i -> peer_map[month - i].val)
         
         shift_expr = f"""
             CASE
@@ -923,10 +887,7 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any]):
                     slice(
                         concat(
                             array(c.{value_col}),
-                            transform(
-                                sequence(1, c.MONTH_DIFF - 1),
-                                i -> c.peer_map[CAST(c.month_int - i AS INT)].{val_col_name}
-                            ),
+                            array_repeat(NULL, c.MONTH_DIFF - 1),
                             p.{array_name}
                         ),
                         1, {history_len}
@@ -1042,8 +1003,8 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
         F.max(prt).alias("max_backfill_month")
     ).first()
     
-    min_backfill = str(backfill_range['min_backfill_month'])
-    max_backfill = str(backfill_range['max_backfill_month'])
+    min_backfill = backfill_range['min_backfill_month']
+    max_backfill = backfill_range['max_backfill_month']
     
     logger.info(f"Backfill month range: {min_backfill} to {max_backfill}")
     
@@ -1117,33 +1078,8 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
             "left_semi"
         )
     
-    # =========================================================================
-    # OPTIMIZATION: Pre-calculate peer backfills for gap filling (A1+A2 Combined)
-    # =========================================================================
-    # Collect all backfill values for the account into a MAP to fill gaps immediately
-    # Map Key: month_int, Map Value: Struct(val_col1, val_col2...)
-    val_struct_fields = []
-    for rc in rolling_columns:
-        src_col = rc.get('mapper_column', rc.get('source_column', rc['name']))
-        prepared_col = f"_prepared_{rc['name']}"
-        value_col = prepared_col if prepared_col in case_iii_df.columns else src_col
-        val_struct_fields.append(F.col(value_col).alias(f"val_{rc['name']}"))
-        
-    peer_window = Window.partitionBy(pk)
-    case_iii_with_peers = case_iii_df.withColumn(
-        "peer_map", 
-        F.map_from_entries(
-            F.collect_list(
-                F.struct(
-                    F.col("month_int"), 
-                    F.struct(*val_struct_fields)
-                )
-            ).over(peer_window)
-        )
-    )
-    
     # Create temp views
-    case_iii_with_peers.createOrReplaceTempView("backfill_records")
+    case_iii_df.createOrReplaceTempView("backfill_records")
     summary_filtered.createOrReplaceTempView("summary_affected")
     
     # =========================================================================
@@ -1156,7 +1092,6 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
         SELECT 
             b.*,
             s.{prt} as prior_month,
-            {month_to_int_expr(f"s.{prt}")} as prior_month_int,
             s.{ts} as prior_ts,
             {', '.join([f's.{arr} as prior_{arr}' for arr in history_cols])},
             (
@@ -1181,15 +1116,10 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
     for rc in rolling_columns:
         array_name = get_history_col_name(rc['name'])
         src_col = rc.get('mapper_column', rc.get('source_column', rc['name']))
+        mapper_expr = rc.get('mapper_expr', src_col)
         prepared_col = f"_prepared_{rc['name']}"
         value_col = prepared_col if prepared_col in case_iii_df.columns else src_col
-        val_col_name = f"val_{rc['name']}"
         
-        # Logic: 
-        # 1. Start with current value
-        # 2. Fill Gap: Use transform on sequence to lookup peer_map
-        #    Map lookup returns NULL if key not found (perfect for gaps)
-        # 3. Append Prior History - AND PATCH IT with peer_map to resolve conflicts
         new_row_expr = f"""
             CASE
                 WHEN prior_month IS NOT NULL AND months_since_prior > 0 THEN
@@ -1197,31 +1127,15 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
                         concat(
                             array({value_col}),
                             CASE 
-                                WHEN months_since_prior > 1 THEN 
-                                    transform(
-                                        sequence(1, months_since_prior - 1),
-                                        i -> peer_map[CAST(month_int - i AS INT)].{val_col_name}
-                                    )
+                                WHEN months_since_prior > 1 THEN array_repeat(NULL, months_since_prior - 1)
                                 ELSE array()
                             END,
-                            transform(
-                                prior_{array_name},
-                                (val, i) -> COALESCE(
-                                    peer_map[CAST(prior_month_int - i AS INT)].{val_col_name},
-                                    val
-                                )
-                            )
+                            prior_{array_name}
                         ),
                         1, {history_len}
                     )
                 ELSE
-                    concat(
-                        array({value_col}),
-                        transform(
-                            sequence(1, {history_len} - 1),
-                            i -> peer_map[CAST(month_int - i AS INT)].{val_col_name}
-                        )
-                    )
+                    concat(array({value_col}), array_repeat(NULL, {history_len - 1}))
             END as {array_name}
         """
         new_row_exprs.append(new_row_expr)
@@ -1229,7 +1143,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
     # Get columns from backfill record (excluding temp columns)
     exclude_backfill = {"month_int", "max_existing_month", "max_existing_ts", 
                        "max_month_int", "case_type", "MONTH_DIFF",
-                       "prior_month", "prior_month_int", "prior_ts", "months_since_prior"}
+                       "prior_month", "prior_ts", "months_since_prior"}
     exclude_backfill.update([f"prior_{arr}" for arr in history_cols])
     exclude_backfill.update([c for c in case_iii_df.columns if c.startswith("_prepared_")])
     
@@ -1330,12 +1244,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
             
             # Get the data type for this column (Integer or String)
             data_type = rc.get('type', rc.get('data_type', 'Integer'))
-            if data_type.lower() == 'string':
-                sql_type = 'STRING'
-            elif data_type.lower() in ('double', 'float', 'decimal'):
-                sql_type = 'DOUBLE'
-            else:
-                sql_type = 'BIGINT'
+            sql_type = 'STRING' if data_type.lower() == 'string' else 'BIGINT'
             
             # Use transform with aggregate to check all backfills for this position
             # For each array element at index i:
