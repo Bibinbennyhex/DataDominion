@@ -42,14 +42,14 @@ def setup_data(spark):
     
     spark.sql("""
         CREATE TABLE demo.complex_test.accounts (
-            cons_acct_key BIGINT, rpt_as_of_mo STRING, base_ts TIMESTAMP, 
+            cons_acct_key BIGINT, rpt_as_of_mo DATE, base_ts TIMESTAMP, 
             balance_am BIGINT, payment_rating_cd STRING
         ) USING iceberg
     """)
     
     spark.sql("""
         CREATE TABLE demo.complex_test.summary (
-            cons_acct_key BIGINT, rpt_as_of_mo STRING, base_ts TIMESTAMP,
+            cons_acct_key BIGINT, rpt_as_of_mo DATE, base_ts TIMESTAMP,
             balance_am BIGINT, payment_rating_cd STRING,
             balance_am_history ARRAY<BIGINT>, payment_rating_cd_history ARRAY<STRING>,
             updated_base_ts TIMESTAMP
@@ -58,7 +58,7 @@ def setup_data(spark):
     
     spark.sql("""
         CREATE TABLE demo.complex_test.latest_summary (
-            cons_acct_key BIGINT, rpt_as_of_mo STRING, base_ts TIMESTAMP,
+            cons_acct_key BIGINT, rpt_as_of_mo DATE, base_ts TIMESTAMP,
             balance_am BIGINT, payment_rating_cd STRING,
             balance_am_history ARRAY<BIGINT>, payment_rating_cd_history ARRAY<STRING>,
             updated_base_ts TIMESTAMP
@@ -70,36 +70,29 @@ def setup_data(spark):
     # ---------------------------------------------------------
     print("Setting up Scenario 1 (Acct 1001)...")
     # Insert 24 months (2024-01 to 2025-12) with Balance=1000
-    # To keep it simple, we insert rows directly.
-    # History for 2025-12 should be [1000, 1000...]
-    
-    # We will just insert the bounds to save setup time, but for full correctness ideally all rows.
-    # But pipeline reads partitions.
     
     # Let's insert Dec 2025 as the anchor.
     spark.sql(f"""
         INSERT INTO demo.complex_test.summary 
         VALUES (
-            1001, '2025-12', TIMESTAMP '2025-12-01 00:00:00', 1000, '0',
+            1001, DATE '2025-12-31', TIMESTAMP '2025-12-01 00:00:00', 1000, '0',
             array_repeat(1000, 36), array_repeat('0', 36), NULL
         )
     """)
     spark.sql(f"""
         INSERT INTO demo.complex_test.latest_summary 
         VALUES (
-            1001, '2025-12', TIMESTAMP '2025-12-01 00:00:00', 1000, '0',
+            1001, DATE '2025-12-31', TIMESTAMP '2025-12-01 00:00:00', 1000, '0',
             array_repeat(1000, 36), array_repeat('0', 36), NULL
         )
     """)
     
     # Now insert Updates: 2024-01 to 2025-12. All Bal=5000.
-    # We will generate these using Spark logic or just a few key ones.
-    # Let's insert: 2025-12, 2025-11, 2025-10.
     spark.sql("""
         INSERT INTO demo.complex_test.accounts VALUES
-        (1001, '2025-12', TIMESTAMP '2026-01-01 00:00:00', 5000, '0'),
-        (1001, '2025-11', TIMESTAMP '2026-01-01 00:00:00', 5000, '0'),
-        (1001, '2025-10', TIMESTAMP '2026-01-01 00:00:00', 5000, '0')
+        (1001, DATE '2025-12-31', TIMESTAMP '2026-01-01 00:00:00', 5000, '0'),
+        (1001, DATE '2025-11-30', TIMESTAMP '2026-01-01 00:00:00', 5000, '0'),
+        (1001, DATE '2025-10-31', TIMESTAMP '2026-01-01 00:00:00', 5000, '0')
     """)
 
     # ---------------------------------------------------------
@@ -110,7 +103,7 @@ def setup_data(spark):
     spark.sql("""
         INSERT INTO demo.complex_test.latest_summary 
         VALUES (
-            2002, '2025-12', TIMESTAMP '2025-12-01 00:00:00', 1000, '0',
+            2002, DATE '2025-12-31', TIMESTAMP '2025-12-01 00:00:00', 1000, '0',
             array(1000, NULL, NULL), array('0', '?', '?'), NULL
         )
     """)
@@ -118,9 +111,9 @@ def setup_data(spark):
     # Forward Batch: Jan, Feb, Mar 2026
     spark.sql("""
         INSERT INTO demo.complex_test.accounts VALUES
-        (2002, '2026-01', TIMESTAMP '2026-01-01 00:00:00', 2000, '0'),
-        (2002, '2026-02', TIMESTAMP '2026-02-01 00:00:00', 3000, '0'),
-        (2002, '2026-03', TIMESTAMP '2026-03-01 00:00:00', 4000, '0')
+        (2002, DATE '2026-01-31', TIMESTAMP '2026-01-01 00:00:00', 2000, '0'),
+        (2002, DATE '2026-02-28', TIMESTAMP '2026-02-01 00:00:00', 3000, '0'),
+        (2002, DATE '2026-03-31', TIMESTAMP '2026-03-01 00:00:00', 4000, '0')
     """)
 
 def verify(spark):
@@ -141,7 +134,7 @@ def verify(spark):
     row1 = spark.sql("""
         SELECT balance_am, balance_am_history 
         FROM demo.complex_test.summary 
-        WHERE cons_acct_key = 1001 AND rpt_as_of_mo = '2025-12'
+        WHERE cons_acct_key = 1001 AND rpt_as_of_mo = DATE '2025-12-31'
     """).first()
     
     if row1:
@@ -157,11 +150,13 @@ def verify(spark):
         # - Pos 2 (Oct): Updated to 5000 (from batch).
         # - Pos 3 (Sep): Not in batch -> Original 1000.
         
-        if bal == 5000 and hist[1] == 5000 and hist[2] == 5000:
-            print("[PASS] Updates propagated correctly to history.")
+        if bal == 5000 and hist[0] == 5000 and hist[1] == 5000 and hist[2] == 5000:
+            print("[PASS] Updates propagated correctly to history (Index 0, 1, 2 updated).")
             passed_s1 = True
         else:
-            print("[FAIL] Updates did not propagate fully.")
+            print(f"[FAIL] Updates failed. Expected [5000, 5000, 5000...], Got {hist[:3]}")
+            # If Index 0 is 1000, it confirms the bug or data mismatch.
+            passed_s1 = False
     else:
         print("[FAIL] Row not found.")
 
@@ -175,7 +170,7 @@ def verify(spark):
     row2 = spark.sql("""
         SELECT balance_am_history 
         FROM demo.complex_test.summary 
-        WHERE cons_acct_key = 2002 AND rpt_as_of_mo = '2026-03'
+        WHERE cons_acct_key = 2002 AND rpt_as_of_mo = DATE '2026-03-31'
     """).first()
     
     if row2:

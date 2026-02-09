@@ -1,16 +1,8 @@
 """
-Summary Pipeline v9.4.6 - Temp Table Optimized Production Implementation
+Summary Pipeline v9.4.4 - Temp Table Optimized Production Implementation
 =================================================================
 
-VERSION 9.4.6 FIXES:
-- Fixed Case III Part B Join Condition: Added explicit equality check (`OR s=b`) 
-  to ensure current month updates are captured reliably, fixing an issue where 
-  Index 0 failed to update in some environments/formats.
-
-VERSION 9.4.5 FIXES:
-- Fixed Case III Part B (Update) logic to correctly handle NULL updates.
-  Replaced `aggregate` + `coalesce` with `filter` + `element_at`.
-- Fixed Case III Part A (Insert) logic to correctly handle NULL backfills.
+VERSION 9.4.4 FIXES:
 - Fixed Case III Part B (Update) logic to include CURRENT MONTH in array updates.
   Previously, strict inequality (>) excluded the current month from history updates, 
   causing Index 0 of the history array to retain old values even when scalar columns updated.
@@ -1220,11 +1212,10 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
                             END,
                             transform(
                                 prior_{array_name},
-                                (val, i) -> CASE 
-                                    WHEN peer_map[CAST(prior_month_int - i AS INT)] IS NOT NULL
-                                    THEN peer_map[CAST(prior_month_int - i AS INT)].{val_col_name}
-                                    ELSE val
-                                END
+                                (val, i) -> COALESCE(
+                                    peer_map[CAST(prior_month_int - i AS INT)].{val_col_name},
+                                    val
+                                )
                             )
                         ),
                         1, {history_len}
@@ -1290,8 +1281,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
             ) as backfill_position
         FROM backfill_records b
         JOIN summary_affected s ON b.{pk} = s.{pk}
-        WHERE ({month_to_int_expr(f"s.{prt}")} > {month_to_int_expr(f"b.{prt}")} 
-            OR {month_to_int_expr(f"s.{prt}")} = {month_to_int_expr(f"b.{prt}")})
+        WHERE {month_to_int_expr(f"s.{prt}")} >= {month_to_int_expr(f"b.{prt}")}
           AND ({month_to_int_expr(f"s.{prt}")} - {month_to_int_expr(f"b.{prt}")}) < {history_len}
     """)
     
@@ -1344,16 +1334,30 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
             array_name = get_history_col_name(rc['name'])
             backfill_col = f"backfill_{rc['name']}"
             
-            # Use filter to find matching backfill for position i
-            # If match found, use its value (even if NULL). If no match, keep existing x.
+            # Get the data type for this column (Integer or String)
+            data_type = rc.get('type', rc.get('data_type', 'Integer'))
+            if data_type.lower() == 'string':
+                sql_type = 'STRING'
+            elif data_type.lower() in ('double', 'float', 'decimal'):
+                sql_type = 'DOUBLE'
+            else:
+                sql_type = 'BIGINT'
+            
+            # Use transform with aggregate to check all backfills for this position
+            # For each array element at index i:
+            #   - Check if any backfill has position == i
+            #   - If yes, use that backfill's value; if no, keep original
             update_expr = f"""
                 transform(
                     existing_{array_name},
-                    (x, i) -> CASE 
-                        WHEN size(filter(backfill_list, b -> b.backfill_position = i)) > 0
-                        THEN element_at(filter(backfill_list, b -> b.backfill_position = i), 1).{backfill_col}
-                        ELSE x
-                    END
+                    (x, i) -> COALESCE(
+                        aggregate(
+                            backfill_list,
+                            CAST(NULL AS {sql_type}),
+                            (acc, b) -> CASE WHEN b.backfill_position = i THEN b.{backfill_col} ELSE acc END
+                        ),
+                        x
+                    )
                 ) as {array_name}
             """
             update_exprs.append(update_expr)

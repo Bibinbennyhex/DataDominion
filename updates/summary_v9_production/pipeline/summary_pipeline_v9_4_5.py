@@ -1,16 +1,15 @@
 """
-Summary Pipeline v9.4.6 - Temp Table Optimized Production Implementation
+Summary Pipeline v9.4.5 - Temp Table Optimized Production Implementation
 =================================================================
-
-VERSION 9.4.6 FIXES:
-- Fixed Case III Part B Join Condition: Added explicit equality check (`OR s=b`) 
-  to ensure current month updates are captured reliably, fixing an issue where 
-  Index 0 failed to update in some environments/formats.
 
 VERSION 9.4.5 FIXES:
 - Fixed Case III Part B (Update) logic to correctly handle NULL updates.
   Replaced `aggregate` + `coalesce` with `filter` + `element_at`.
 - Fixed Case III Part A (Insert) logic to correctly handle NULL backfills.
+  Replaced `COALESCE(peer_map[key].val, existing)` with `CASE WHEN peer_map[key] IS NOT NULL`.
+  This allows NULL backfill values to overwrite existing history.
+
+VERSION 9.4.4 FIXES:
 - Fixed Case III Part B (Update) logic to include CURRENT MONTH in array updates.
   Previously, strict inequality (>) excluded the current month from history updates, 
   causing Index 0 of the history array to retain old values even when scalar columns updated.
@@ -1290,8 +1289,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
             ) as backfill_position
         FROM backfill_records b
         JOIN summary_affected s ON b.{pk} = s.{pk}
-        WHERE ({month_to_int_expr(f"s.{prt}")} > {month_to_int_expr(f"b.{prt}")} 
-            OR {month_to_int_expr(f"s.{prt}")} = {month_to_int_expr(f"b.{prt}")})
+        WHERE {month_to_int_expr(f"s.{prt}")} >= {month_to_int_expr(f"b.{prt}")}
           AND ({month_to_int_expr(f"s.{prt}")} - {month_to_int_expr(f"b.{prt}")}) < {history_len}
     """)
     

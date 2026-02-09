@@ -1,5 +1,18 @@
 # Changelog - Summary Pipeline
 
+## v9.4.6 (February 2026) - Production Patch
+### Bug Fixes
+- **Robust Join Condition**: Improved Case III Part B logic with explicit equality check (`> OR =`) to ensure the current month update is never missed, resolving edge cases with string date formats.
+
+## v9.4.5 (February 2026) - Production Patch
+### Bug Fixes
+- **NULL Value Handling (Part B)**: Fixed Case III Part B logic to support updating existing values to `NULL` (Future Updates). Replaced `coalesce` with `filter` + `element_at`.
+- **NULL Value Handling (Part A)**: Fixed Case III Part A logic to support overwriting existing history with `NULL` (Backfill History). Replaced `COALESCE(peer_map[key].val, existing)` with explicit key check `peer_map[key] IS NOT NULL`.
+
+## v9.4.4 (February 2026) - Production Patch
+### Bug Fixes
+- **Current Month Array Update**: Fixed Case III Part B logic to include the current month (Index 0) in array updates. Previously, updates to the current month updated the scalar value (via Part A) but failed to update the first element of the history array (via Part B).
+
 ## v9.4.3 (February 2026) - Production Patch
 ### Critical Fixes
 - **Backfill Chaining (Initial Load)**: Fixed logic gap where backfill batches arriving for accounts with *no prior history* failed to chain consecutive months. Now uses `peer_map` lookup unconditionally.
