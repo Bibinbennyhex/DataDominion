@@ -14,6 +14,7 @@ Scenario 2: Multi-Month Forward (Case II)
 """
 
 import sys
+from datetime import datetime
 from pyspark.sql import SparkSession
 
 # Use production pipeline (v9.4.3)
@@ -132,7 +133,7 @@ def verify(spark):
     
     print("\nScenario 1: Acct 1001 (Full Update)")
     row1 = spark.sql("""
-        SELECT balance_am, balance_am_history 
+        SELECT balance_am, balance_am_history, base_ts
         FROM demo.complex_test.summary 
         WHERE cons_acct_key = 1001 AND rpt_as_of_mo = DATE '2025-12-31'
     """).first()
@@ -140,22 +141,24 @@ def verify(spark):
     if row1:
         bal = row1['balance_am']
         hist = row1['balance_am_history']
+        ts = row1['base_ts']
+        
         print(f"Dec 2025 Balance: {bal}")
         print(f"Dec 2025 History: {hist[:5]}")
+        print(f"Dec 2025 BaseTS: {ts}")
         
-        # Expectation: Current=5000. History=[5000, 5000, 5000, 1000, 1000...]
-        # Why? 
-        # - Pos 0 (Dec): Updated to 5000.
-        # - Pos 1 (Nov): Updated to 5000 (from batch).
-        # - Pos 2 (Oct): Updated to 5000 (from batch).
-        # - Pos 3 (Sep): Not in batch -> Original 1000.
+        # Expectation: 
+        # - Balance updated to 5000
+        # - History Index 0 updated to 5000
+        # - BaseTS updated to 2026-01-01 (from update batch), replacing 2025-12-01
         
-        if bal == 5000 and hist[0] == 5000 and hist[1] == 5000 and hist[2] == 5000:
-            print("[PASS] Updates propagated correctly to history (Index 0, 1, 2 updated).")
+        expected_ts = datetime(2026, 1, 1)
+        
+        if bal == 5000 and hist[0] == 5000 and hist[1] == 5000 and hist[2] == 5000 and ts == expected_ts:
+            print("[PASS] Updates propagated correctly (Balance, History, and BaseTS updated).")
             passed_s1 = True
         else:
-            print(f"[FAIL] Updates failed. Expected [5000, 5000, 5000...], Got {hist[:3]}")
-            # If Index 0 is 1000, it confirms the bug or data mismatch.
+            print(f"[FAIL] Updates failed. Expected TS={expected_ts}, Got TS={ts}, Hist[0]={hist[0]}")
             passed_s1 = False
     else:
         print("[FAIL] Row not found.")

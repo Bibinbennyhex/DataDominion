@@ -1,5 +1,17 @@
 # Changelog - Summary Pipeline
 
+## v9.4.8 (February 2026) - Production Patch
+### Feature
+- **Base TS Propagation**: Enhanced `base_ts` update logic to propagate the maximum backfill timestamp to **ALL** future rows affected by the backfill (replacing v9.4.7 behavior which only updated current month). The logic `GREATEST(existing_ts, max_backfill_ts)` ensures timestamps only move forward. This correctly reflects that the record (specifically its history array) has been updated by newer data.
+
+## v9.4.7 (February 2026) - Production Patch
+### Feature
+- **Base TS Update**: Added logic to update `base_ts` (source timestamp) when a backfill updates the *current* month (Index 0) of an existing summary record. This ensures the summary record accurately reflects the timestamp of the latest data source. Future month updates (Index > 0) do not affect `base_ts`.
+
+## v9.4.7 (February 2026) - Production Patch
+### Feature
+- **Base TS Propagation**: Enhanced `base_ts` update logic to propagate the maximum backfill timestamp to **ALL** future rows affected by the backfill. The logic `GREATEST(existing_ts, max_backfill_ts)` ensures timestamps only move forward. This correctly reflects that the record (specifically its history array) has been updated by newer data.
+
 ## v9.4.6 (February 2026) - Production Patch
 ### Bug Fixes
 - **Robust Join Condition**: Improved Case III Part B logic with explicit equality check (`> OR =`) to ensure the current month update is never missed, resolving edge cases with string date formats.

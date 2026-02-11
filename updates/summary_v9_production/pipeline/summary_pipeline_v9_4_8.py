@@ -1,14 +1,14 @@
 """
-Summary Pipeline v9.4.7 - Temp Table Optimized Production Implementation
+Summary Pipeline v9.4.8 - Temp Table Optimized Production Implementation
 =================================================================
 
-VERSION 9.4.7 FIXES:
+VERSION 9.4.8 FIXES:
 - Enhanced Case III Part B (Update) logic to propagate `base_ts` updates to ALL
-  future rows affected by a backfill. Logic uses `GREATEST(existing_ts, max_backfill_ts)`
-  to ensure the summary record reflects the latest timestamp of any data contributing
-  to its history.
+  future rows affected by a backfill (not just current month updates). 
+  Logic uses `GREATEST(existing_ts, max_backfill_ts)` to ensure the summary record
+  reflects the latest timestamp of any data contributing to its history.
 
-VERSION 9.4.6 FIXES:
+VERSION 9.4.7 FIXES:
 - Fixed Case III Part B Join Condition: Added explicit equality check (`OR s=b`) 
   to ensure current month updates are captured reliably, fixing an issue where 
   Index 0 failed to update in some environments/formats.
@@ -1335,7 +1335,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
         # We use first() for existing arrays since they're the same for all rows of same account+month
         agg_exprs = [
             F.collect_list(F.struct(*[F.col(c) for c in struct_fields])).alias("backfill_list"),
-            # Capture max base_ts from ALL backfills affecting this row.
+            # Capture max base_ts from ALL backfills affecting this row (User Req: Propagate max base_ts)
             # This ensures future rows updated by backfills reflect the timestamp of the update source.
             F.max(F.col("backfill_ts")).alias("new_base_ts")
         ]
