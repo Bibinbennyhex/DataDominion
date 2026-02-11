@@ -338,10 +338,6 @@ def process_case_i(case_i_df, config: Dict[str, Any]):
     logger.info("STEP 2a: Process Case I (New Accounts)")
     logger.info("=" * 80)
 
-    if case_i_df.isEmpty():
-        logger.info("No Case I records to process")
-        return None
-
     logger.info(f"Processing new accounts")
 
     result = case_i_df
@@ -410,10 +406,6 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any]):
     logger.info("=" * 80)
     logger.info("STEP 2b: Process Case II (Forward Entries)")
     logger.info("=" * 80)
-
-    if case_ii_df.isEmpty():
-        logger.info("No Case II records to process")
-        return None
 
     logger.info(f"Processing forward entries")
 
@@ -578,10 +570,6 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
     logger.info("=" * 80)
     logger.info("STEP 2c: Process Case III (Backfill)")
     logger.info("=" * 80)
-
-    if case_iii_df.isEmpty():
-        logger.info("No Case III records to process")
-        return None
 
     logger.info(f"CASE III - Processing backfill records")
 
@@ -980,11 +968,7 @@ def process_case_iv(spark: SparkSession, case_iv_df, case_i_result, config: Dict
     logger.info("STEP 2d: Process Case IV (Bulk Historical Load)")
     logger.info("=" * 80)
     process_start_time = time.time()
-
-    if case_iv_df.isEmpty():
-        logger.info("No Case IV records to process")
-        return None
-    
+   
     logger.info(f"Processing bulk historical records")
     
     pk = config['primary_column']
