@@ -71,5 +71,34 @@ services:
       tail -f /dev/null
       "
 
+  airflow:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    image: local/airflow-main:2.10.2
+    container_name: airflow-main
+    depends_on:
+      - spark-iceberg-main
+    networks:
+      - iceberg_net_main
+    user: "0:0"
+    environment:
+      - AIRFLOW_HOME=/opt/airflow
+      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
+      - SPARK_CONTAINER_NAME=spark-iceberg-main
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ../../:/workspace
+      - airflow_home:/opt/airflow
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8085:8080"
+    command: standalone
+
 networks:
   iceberg_net_main:
+
+volumes:
+  airflow_home:

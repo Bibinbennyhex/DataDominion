@@ -209,6 +209,7 @@ def create_spark_session(app_name: str) -> SparkSession:
         .config("spark.sql.catalog.temp_catalog.warehouse", "s3://warehouse/")
         .config("spark.sql.catalog.temp_catalog.s3.endpoint", "http://minio:9000")
         .config("spark.sql.defaultCatalog", "primary_catalog")
+        .config("spark.ui.showConsoleProgress", "false")
         .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")
         .config("spark.hadoop.fs.s3a.access.key", "admin")
         .config("spark.hadoop.fs.s3a.secret.key", "password")
@@ -216,7 +217,7 @@ def create_spark_session(app_name: str) -> SparkSession:
         .enableHiveSupport()
         .getOrCreate()
     )
-    spark.sparkContext.setLogLevel("WARN")
+    spark.sparkContext.setLogLevel("ERROR")
     return spark
 
 

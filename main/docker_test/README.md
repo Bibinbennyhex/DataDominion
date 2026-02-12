@@ -5,6 +5,7 @@ This folder provides a docker-executable test harness for `main/summary_inc.py`,
 ## Included
 
 - `docker-compose.yml`: Local Spark + Iceberg REST + MinIO stack
+- `airflow/dags/main_summary_stepwise_dag.py`: Stepwise Airflow DAG for orchestrated test execution
 - `run_test.ps1`: One-command runner for all tests
 - `tests/test_main_all_cases.py`: End-to-end Case I/II/III/IV coverage
 - `tests/test_main_base_ts_propagation.py`: Focused Case III `base_ts` propagation regression
@@ -63,6 +64,28 @@ docker compose up -d
 docker compose exec -T spark-iceberg-main python3 /workspace/main/docker_test/tests/run_all_tests.py
 docker compose down
 ```
+
+## Airflow DAG Run
+
+Airflow is included in `docker-compose.yml` as `airflow-main` and exposed at `http://localhost:8085`.
+
+For proper per-task logs in Airflow UI, trigger a normal DAG run (scheduler-managed):
+
+```powershell
+cd main/docker_test
+docker compose up -d
+docker compose exec -T airflow airflow dags list
+docker compose exec -T airflow airflow dags trigger main_summary_stepwise_dag -e 2026-02-12T12:00:00+00:00 -r manual_trigger_20260212_120000
+```
+
+This DAG runs these scripts step-by-step inside `spark-iceberg-main`:
+- `simple_test.py`
+- `test_main_all_cases.py`
+- `test_main_base_ts_propagation.py`
+- `run_backfill_test.py`
+- `test_performance_benchmark.py --scale TINY`
+
+Optional (CLI-only smoke): you can still use `airflow dags test ...`, but those task logs can include dependency-check messages like `Task is not able to be run` and are less clean for UI review.
 
 ## Notes
 
