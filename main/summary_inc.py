@@ -12,6 +12,7 @@ from datetime import datetime, date, timedelta
 from dateutil.relativedelta import relativedelta
 from typing import Dict, List, Tuple, Any, Optional
 from functools import reduce
+import math
 
 handler = logging.StreamHandler(sys.stdout)
 formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
@@ -68,6 +69,95 @@ def create_spark_session(app_name: str, spark_config: Dict[str, Any]):
 def month_to_int_expr(col_name: str) -> str:
     """SQL expression to convert YYYY-MM to integer"""
     return f"(CAST(SUBSTRING({col_name}, 1, 4) AS INT) * 12 + CAST(SUBSTRING({col_name}, 6, 2) AS INT))"
+
+
+def _to_int(value: Any, default: int) -> int:
+    """Best-effort int conversion with default fallback."""
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def get_write_partitions(
+    spark: SparkSession,
+    config: Dict[str, Any],
+    expected_rows: Optional[int] = None,
+    scale_factor: float = 1.0,
+    stage: str = ""
+) -> int:
+    """
+    Compute write partitions efficiently and effectively.
+
+    Strategy:
+      1. Respect explicit override `write_partitions` if provided.
+      2. Cache runtime defaults (shuffle/defaultParallelism) once per run.
+      3. If expected_rows is known, blend row-based sizing with a baseline
+         parallelism floor to avoid under-utilization.
+    """
+    configured = config.get("write_partitions")
+    if configured is not None:
+        parts = _to_int(configured, MIN_PARTITIONS)
+        parts = max(MIN_PARTITIONS, min(MAX_PARTITIONS, parts))
+        return parts
+
+    runtime_cache = config.setdefault("_runtime_cache", {})
+    write_cache = runtime_cache.get("write_partitions")
+    if write_cache is None:
+        shuffle_parts = _to_int(spark.conf.get("spark.sql.shuffle.partitions", "200"), 200)
+        default_parallelism = _to_int(spark.sparkContext.defaultParallelism, MIN_PARTITIONS)
+        base_parallelism = max(shuffle_parts, default_parallelism)
+
+        perf_cfg = config.get("performance", {})
+        min_parts = _to_int(
+            config.get("min_write_partitions", perf_cfg.get("min_partitions", MIN_PARTITIONS)),
+            MIN_PARTITIONS
+        )
+        max_parts = _to_int(
+            config.get("max_write_partitions", perf_cfg.get("max_partitions", MAX_PARTITIONS)),
+            MAX_PARTITIONS
+        )
+        target_rows_per_partition = _to_int(
+            config.get("target_rows_per_partition", perf_cfg.get("target_records_per_partition", 2_000_000)),
+            2_000_000
+        )
+        min_parallelism_factor = float(
+            config.get("min_parallelism_factor", perf_cfg.get("min_parallelism_factor", 0.25))
+        )
+
+        write_cache = {
+            "base_parallelism": base_parallelism,
+            "min_parts": max(1, min_parts),
+            "max_parts": max(1, max_parts),
+            "target_rows_per_partition": max(1, target_rows_per_partition),
+            "min_parallelism_factor": max(0.0, min_parallelism_factor),
+        }
+        runtime_cache["write_partitions"] = write_cache
+
+    base_parallelism = write_cache["base_parallelism"]
+    min_parts = write_cache["min_parts"]
+    max_parts = write_cache["max_parts"]
+    target_rows_per_partition = write_cache["target_rows_per_partition"]
+    min_parallelism_factor = write_cache["min_parallelism_factor"]
+
+    scaled_base = max(1, int(round(base_parallelism * scale_factor)))
+
+    if expected_rows is not None and expected_rows > 0:
+        row_based = int(math.ceil(float(expected_rows) / float(target_rows_per_partition)))
+        floor_parallel = int(max(min_parts, round(scaled_base * min_parallelism_factor)))
+        desired = max(row_based, floor_parallel)
+    else:
+        desired = scaled_base
+
+    parts = max(min_parts, min(max_parts, desired))
+
+    if stage:
+        logger.info(
+            f"Write partitions [{stage}]: {parts} "
+            f"(base={base_parallelism}, expected_rows={expected_rows}, scale={scale_factor})"
+        )
+
+    return parts
 
 
 def prepare_source_data(df, config: Dict[str, Any]):
@@ -394,7 +484,7 @@ def process_case_i(case_i_df, config: Dict[str, Any]):
     return result
 
 
-def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any]):
+def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any], expected_rows: Optional[int] = None):
     """
     Process Case II - shift existing arrays for forward entries
     
@@ -542,7 +632,9 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any]):
             )
         )
 
-    result.coalesce(100).writeTo("temp_catalog.checkpointdb.case_2").create()
+    result.repartition(
+        get_write_partitions(spark, config, expected_rows=expected_rows, stage="case_2_temp")
+    ).writeTo("temp_catalog.checkpointdb.case_2").create()
 
     process_end_time = time.time()
     process_total_minutes = (process_end_time - process_start_time) / 60
@@ -552,7 +644,7 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any]):
     return
 
 
-def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
+def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], expected_rows: Optional[int] = None):
     """
     Process Case III - rebuild history arrays for backfill
     1. Creates NEW summary rows for backfill months (with inherited history)
@@ -810,7 +902,9 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
         .drop("_rn")
     )
 
-    new_backfill_rows.coalesce(100).writeTo("temp_catalog.checkpointdb.case_3a").create()
+    new_backfill_rows.repartition(
+        get_write_partitions(spark, config, expected_rows=expected_rows, stage="case_3a_temp")
+    ).writeTo("temp_catalog.checkpointdb.case_3a").create()
 
     process_end_time = time.time()
     process_total_minutes = (process_end_time - process_start_time) / 60
@@ -936,17 +1030,23 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any]):
                 )
             )
 
-    backfill_updates_df.coalesce(100).writeTo("temp_catalog.checkpointdb.case_3b").create()    
-
-    process_end_time = time.time()
-    process_total_minutes = (process_end_time - process_start_time) / 60
-    logger.info(f"Case III Part B Generated | Time Elapsed: {process_total_minutes:.2f} minutes")    
+    if backfill_updates_df is not None:
+        backfill_updates_df.repartition(
+            get_write_partitions(spark, config, stage="case_3b_temp")
+        ).writeTo("temp_catalog.checkpointdb.case_3b").create()
+        process_end_time = time.time()
+        process_total_minutes = (process_end_time - process_start_time) / 60
+        logger.info(f"Case III Part B Generated | Time Elapsed: {process_total_minutes:.2f} minutes")
+    else:
+        process_end_time = time.time()
+        process_total_minutes = (process_end_time - process_start_time) / 60
+        logger.info(f"Case III Part B Skipped (No Future Updates) | Time Elapsed: {process_total_minutes:.2f} minutes")
     logger.info("-" * 60)
 
     return
 
 
-def process_case_iv(spark: SparkSession, case_iv_df, case_i_result, config: Dict[str, Any]):
+def process_case_iv(spark: SparkSession, case_iv_df, case_i_result, config: Dict[str, Any], expected_rows: Optional[int] = None):
     """
     Process Case IV - Bulk historical load for new accounts with multiple months
         
@@ -1121,7 +1221,9 @@ def process_case_iv(spark: SparkSession, case_iv_df, case_i_result, config: Dict
         "inner"
     )
     
-    result.coalesce(100).writeTo("temp_catalog.checkpointdb.case_4").create()
+    result.repartition(
+        get_write_partitions(spark, config, expected_rows=expected_rows, stage="case_4_temp")
+    ).writeTo("temp_catalog.checkpointdb.case_4").create()
 
     process_end_time = time.time()
     process_total_minutes = (process_end_time - process_start_time) / 60
@@ -1130,7 +1232,7 @@ def process_case_iv(spark: SparkSession, case_iv_df, case_i_result, config: Dict
     return
 
 
-def write_backfill_results(spark: SparkSession, config: Dict[str, Any]):
+def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected_rows_append: Optional[int] = None):
     summary_table = config['destination_table']
     latest_summary_table = config['latest_history_table']
     pk = config['primary_column']
@@ -1142,7 +1244,7 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any]):
         process_start_time = time.time()
 
         if spark.catalog.tableExists("temp_catalog.checkpointdb.case_3a"):
-            case_3a_df = spark.read.table('temp_catalog.checkpointdb.case_3a').coalesce(200)
+            case_3a_df = spark.read.table('temp_catalog.checkpointdb.case_3a')
             case_3a_df.createOrReplaceTempView("case_3a")
 
             spark.sql(
@@ -1164,7 +1266,7 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any]):
 
         if spark.catalog.tableExists("temp_catalog.checkpointdb.case_3b"):
             case_3a_df = spark.read.table('temp_catalog.checkpointdb.case_3a').select(pk,prt)
-            case_3b_df = spark.read.table('temp_catalog.checkpointdb.case_3b').coalesce(200)
+            case_3b_df = spark.read.table('temp_catalog.checkpointdb.case_3b')
             case_3b_filtered_df = case_3b_df.join(case_3a_df,[pk, prt],"left_anti")
             case_3b_filtered_df.createOrReplaceTempView("case_3b")
 
@@ -1192,29 +1294,37 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any]):
             if spark.catalog.tableExists(t):
                 dfs.append(spark.read.table(t))
 
-        append_df = reduce(lambda a, b: a.unionByName(b), dfs)
+        if dfs:
+            append_df = reduce(lambda a, b: a.unionByName(b), dfs)
 
-        append_df.repartition(10).writeTo(summary_table).append()
+            append_df.repartition(
+                get_write_partitions(spark, config, expected_rows=expected_rows_append, stage="summary_append_case_1_4")
+            ).writeTo(summary_table).append()
 
-        process_end_time = time.time()
-        process_total_minutes = (process_end_time - process_start_time) / 60
-        logger.info(f"Updated Summary | APPENDED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: {process_total_minutes:.2f} minutes")
-        logger.info("-" * 60)
+            process_end_time = time.time()
+            process_total_minutes = (process_end_time - process_start_time) / 60
+            logger.info(f"Updated Summary | APPENDED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: {process_total_minutes:.2f} minutes")
+            logger.info("-" * 60)
 
-        logger.info("UPDATING LATEST SUMMARY:")
-        process_start_time = time.time()
-        # Get Latest from append_df - case I & IV for appending to latest_summary
-        window_spec = Window.partitionBy(pk).orderBy(F.col(prt).desc())
-        latest_append_df = (
-            append_df
-            .withColumn("_rn", F.row_number().over(window_spec))
-            .filter(F.col("_rn") == 1)
-            .drop("_rn")
-        )
+            logger.info("UPDATING LATEST SUMMARY:")
+            process_start_time = time.time()
+            # Get Latest from append_df - case I & IV for appending to latest_summary
+            window_spec = Window.partitionBy(pk).orderBy(F.col(prt).desc())
+            latest_append_df = (
+                append_df
+                .withColumn("_rn", F.row_number().over(window_spec))
+                .filter(F.col("_rn") == 1)
+                .drop("_rn")
+            )
 
-        latest_append_df.writeTo(latest_summary_table).append()
-        logger.info(f"Updated latest_summary | APPENDED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: {process_total_minutes:.2f} minutes")
-        logger.info("-" * 60)
+            latest_append_df.writeTo(latest_summary_table).append()
+            logger.info(f"Updated latest_summary | APPENDED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: {process_total_minutes:.2f} minutes")
+            logger.info("-" * 60)
+        else:
+            process_end_time = time.time()
+            process_total_minutes = (process_end_time - process_start_time) / 60
+            logger.info(f"No Case I/IV records to append | Time Elapsed: {process_total_minutes:.2f} minutes")
+            logger.info("-" * 60)
 
 
     except Exception as e:
@@ -1222,7 +1332,7 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any]):
         raise
 
 
-def write_forward_results(spark: SparkSession, config: Dict[str, Any]):
+def write_forward_results(spark: SparkSession, config: Dict[str, Any], expected_rows: Optional[int] = None):
     summary_table = config['destination_table']
     latest_summary_table = config['latest_history_table']
     pk = config['primary_column']
@@ -1235,7 +1345,9 @@ def write_forward_results(spark: SparkSession, config: Dict[str, Any]):
 
         if spark.catalog.tableExists('temp_catalog.checkpointdb.case_2'):
             case_2_df = spark.read.table('temp_catalog.checkpointdb.case_2')
-            case_2_df.repartition(10).writeTo(summary_table).append()
+            case_2_df.repartition(
+                get_write_partitions(spark, config, expected_rows=expected_rows, stage="summary_append_case_2")
+            ).writeTo(summary_table).append()
 
             process_end_time = time.time()
             process_total_minutes = (process_end_time - process_start_time) / 60
@@ -1343,7 +1455,7 @@ def run_pipeline(spark: SparkSession, config: Dict[str, Any]):
         case_iii_df = classified.filter(F.col("case_type") == "CASE_III")
         if stats['case_iii_records'] > 0:
             logger.info(f"\n>>> PROCESSING BACKFILL ({stats['case_iii_records']:,} records)")
-            process_case_iii(spark, case_iii_df, config)
+            process_case_iii(spark, case_iii_df, config, expected_rows=stats['case_iii_records'])
 
         # 2b. Process Case I (New Accounts - first month only)
         case_i_df = classified.filter(F.col("case_type") == "CASE_I")
@@ -1352,8 +1464,14 @@ def run_pipeline(spark: SparkSession, config: Dict[str, Any]):
             logger.info(f"\n>>> PROCESSING NEW ACCOUNTS ({stats['case_i_records']:,} records)")
             case_i_result = process_case_i(case_i_df, config)
             case_i_result.persist(StorageLevel.MEMORY_AND_DISK)
-            count = case_i_result.count()
-            case_i_result.coalesce(100).writeTo("temp_catalog.checkpointdb.case_1").create()
+            case_i_result.repartition(
+                get_write_partitions(
+                    spark,
+                    config,
+                    expected_rows=stats['case_i_records'],
+                    stage="case_1_temp"
+                )
+            ).writeTo("temp_catalog.checkpointdb.case_1").create()
 
             process_end_time = time.time()
             process_total_minutes = (process_end_time - process_start_time) / 60
@@ -1364,17 +1482,21 @@ def run_pipeline(spark: SparkSession, config: Dict[str, Any]):
         case_iv_df = classified.filter(F.col("case_type") == "CASE_IV")
         if stats['case_iv_records'] > 0:
             logger.info(f"\n>>> PROCESSING BULK HISTORICAL ({stats['case_iv_records']:,} records)")
-            process_case_iv(spark, case_iv_df, case_i_result, config)
+            process_case_iv(spark, case_iv_df, case_i_result, config, expected_rows=stats['case_iv_records'])
             case_i_result.unpersist()
 
-        write_backfill_results(spark, config)
+        write_backfill_results(
+            spark,
+            config,
+            expected_rows_append=(stats['case_i_records'] + stats['case_iv_records'])
+        )
 
         # 2d. Process Case II (Forward Entries) - LOWEST PRIORITY
         case_ii_df = classified.filter(F.col("case_type") == "CASE_II")
         if stats['case_ii_records'] > 0:
             logger.info(f"\n>>> PROCESSING FORWARD ENTRIES ({stats['case_ii_records']:,} records)")
-            process_case_ii(spark, case_ii_df, config)
-            write_forward_results(spark, config)
+            process_case_ii(spark, case_ii_df, config, expected_rows=stats['case_ii_records'])
+            write_forward_results(spark, config, expected_rows=stats['case_ii_records'])
 
         logger.info("PROCESS COMPLETED - Deleting the persisted classification results")
         classified.unpersist()
