@@ -1,0 +1,496 @@
+"""
+Shared test utilities for running main/summary_inc.py in local docker.
+"""
+
+import calendar
+import json
+import os
+import sys
+import types
+from datetime import date, datetime
+from typing import Dict, List, Optional
+
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.types import (
+    ArrayType,
+    DateType,
+    IntegerType,
+    LongType,
+    StringType,
+    StructField,
+    StructType,
+    TimestampType,
+)
+
+
+# ---------------------------------------------------------------------------
+# Import fallbacks for main/summary_inc.py dependencies that are unused in tests
+# ---------------------------------------------------------------------------
+
+try:
+    import boto3  # noqa: F401
+except Exception:
+    boto3_stub = types.ModuleType("boto3")
+
+    def _unsupported_client(*args, **kwargs):
+        raise RuntimeError("boto3 client should not be used in local docker tests")
+
+    boto3_stub.client = _unsupported_client
+    sys.modules["boto3"] = boto3_stub
+
+
+try:
+    from dateutil.relativedelta import relativedelta  # noqa: F401
+except Exception:
+    dateutil_mod = types.ModuleType("dateutil")
+    relativedelta_mod = types.ModuleType("dateutil.relativedelta")
+
+    class relativedelta:  # type: ignore
+        def __init__(self, months: int = 0):
+            self.months = months
+
+        def __radd__(self, other):
+            total_month = (other.year * 12 + (other.month - 1)) + self.months
+            year = total_month // 12
+            month = (total_month % 12) + 1
+            day = min(other.day, calendar.monthrange(year, month)[1])
+            return other.replace(year=year, month=month, day=day)
+
+    relativedelta_mod.relativedelta = relativedelta
+    dateutil_mod.relativedelta = relativedelta_mod
+    sys.modules["dateutil"] = dateutil_mod
+    sys.modules["dateutil.relativedelta"] = relativedelta_mod
+
+
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+MAIN_DIR = os.path.join(ROOT_DIR, "main")
+
+if MAIN_DIR not in sys.path:
+    sys.path.insert(0, MAIN_DIR)
+
+import summary_inc as main_pipeline  # noqa: E402
+
+
+HISTORY_LENGTH = 36
+
+SOURCE_SCHEMA_SPEC = [
+    ("cons_acct_key", "BIGINT"),
+    ("bureau_mbr_id", "STRING"),
+    ("port_type_cd", "STRING"),
+    ("acct_type_dtl_cd", "STRING"),
+    ("acct_open_dt", "DATE"),
+    ("acct_closed_dt", "DATE"),
+    ("pymt_terms_cd", "STRING"),
+    ("pymt_terms_dtl_cd", "STRING"),
+    ("acct_dt", "DATE"),
+    ("acct_stat_cd", "STRING"),
+    ("acct_pymt_stat_cd", "STRING"),
+    ("acct_pymt_stat_dtl_cd", "STRING"),
+    ("acct_credit_ext_am", "INT"),
+    ("acct_bal_am", "INT"),
+    ("past_due_am", "INT"),
+    ("actual_pymt_am", "INT"),
+    ("last_pymt_dt", "DATE"),
+    ("schd_pymt_dt", "DATE"),
+    ("next_schd_pymt_am", "INT"),
+    ("collateral_cd", "STRING"),
+    ("orig_pymt_due_dt", "DATE"),
+    ("write_off_dt", "DATE"),
+    ("write_off_am", "INT"),
+    ("asset_class_cd_4in", "STRING"),
+    ("days_past_due_ct_4in", "INT"),
+    ("high_credit_am_4in", "INT"),
+    ("cash_limit_am_4in", "INT"),
+    ("collateral_am_4in", "INT"),
+    ("total_write_off_am_4in", "INT"),
+    ("principal_write_off_am_4in", "INT"),
+    ("settled_am_4in", "INT"),
+    ("interest_rate_4in", "INT"),
+    ("suit_filed_wilful_def_stat_cd_4in", "STRING"),
+    ("wo_settled_stat_cd_4in", "STRING"),
+    ("base_ts", "TIMESTAMP"),
+    ("rpt_as_of_mo", "STRING"),
+    ("insert_ts", "TIMESTAMP"),
+    ("update_ts", "TIMESTAMP"),
+]
+
+SUMMARY_SCHEMA_SPEC = [
+    ("cons_acct_key", "BIGINT"),
+    ("bureau_member_id", "STRING"),
+    ("portfolio_rating_type_cd", "STRING"),
+    ("acct_type_dtl_cd", "STRING"),
+    ("open_dt", "DATE"),
+    ("closed_dt", "DATE"),
+    ("pymt_terms_cd", "STRING"),
+    ("pymt_terms_dtl_cd", "STRING"),
+    ("acct_dt", "DATE"),
+    ("acct_stat_cd", "STRING"),
+    ("acct_pymt_stat_cd", "STRING"),
+    ("acct_pymt_stat_dtl_cd", "STRING"),
+    ("credit_limit_am", "INT"),
+    ("balance_am", "INT"),
+    ("past_due_am", "INT"),
+    ("actual_payment_am", "INT"),
+    ("last_payment_dt", "DATE"),
+    ("schd_pymt_dt", "DATE"),
+    ("emi_amt", "INT"),
+    ("collateral_cd", "STRING"),
+    ("orig_pymt_due_dt", "DATE"),
+    ("dflt_status_dt", "DATE"),
+    ("write_off_am", "INT"),
+    ("asset_class_cd", "STRING"),
+    ("days_past_due", "INT"),
+    ("hi_credit_am", "INT"),
+    ("cash_limit_am", "INT"),
+    ("collateral_am", "INT"),
+    ("charge_off_am", "INT"),
+    ("principal_write_off_am", "INT"),
+    ("settled_am", "INT"),
+    ("interest_rate", "INT"),
+    ("suit_filed_willful_dflt", "STRING"),
+    ("written_off_and_settled_status", "STRING"),
+    ("base_ts", "TIMESTAMP"),
+    ("rpt_as_of_mo", "STRING"),
+    ("orig_loan_am", "INT"),
+    ("payment_rating_cd", "STRING"),
+    ("actual_payment_am_history", "ARRAY<INT>"),
+    ("balance_am_history", "ARRAY<INT>"),
+    ("credit_limit_am_history", "ARRAY<INT>"),
+    ("past_due_am_history", "ARRAY<INT>"),
+    ("payment_rating_cd_history", "ARRAY<STRING>"),
+    ("days_past_due_history", "ARRAY<INT>"),
+    ("asset_class_cd_4in_history", "ARRAY<STRING>"),
+    ("payment_history_grid", "STRING"),
+]
+
+
+def _spark_type(sql_type: str):
+    upper = sql_type.upper()
+    if upper == "STRING":
+        return StringType()
+    if upper == "INT":
+        return IntegerType()
+    if upper == "BIGINT":
+        return LongType()
+    if upper == "DATE":
+        return DateType()
+    if upper == "TIMESTAMP":
+        return TimestampType()
+    if upper == "ARRAY<INT>":
+        return ArrayType(IntegerType())
+    if upper == "ARRAY<STRING>":
+        return ArrayType(StringType())
+    raise ValueError(f"Unsupported SQL type: {sql_type}")
+
+
+def _build_schema(spec: List[tuple]) -> StructType:
+    return StructType([StructField(name, _spark_type(sql_type), True) for name, sql_type in spec])
+
+
+SOURCE_SCHEMA = _build_schema(SOURCE_SCHEMA_SPEC)
+SUMMARY_SCHEMA = _build_schema(SUMMARY_SCHEMA_SPEC)
+
+
+def create_spark_session(app_name: str) -> SparkSession:
+    spark = (
+        SparkSession.builder.appName(app_name)
+        .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+        .config("spark.sql.catalog.primary_catalog", "org.apache.iceberg.spark.SparkCatalog")
+        .config("spark.sql.catalog.primary_catalog.type", "rest")
+        .config("spark.sql.catalog.primary_catalog.uri", "http://rest:8181")
+        .config("spark.sql.catalog.primary_catalog.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
+        .config("spark.sql.catalog.primary_catalog.warehouse", "s3://warehouse/")
+        .config("spark.sql.catalog.primary_catalog.s3.endpoint", "http://minio:9000")
+        .config("spark.sql.catalog.temp_catalog", "org.apache.iceberg.spark.SparkCatalog")
+        .config("spark.sql.catalog.temp_catalog.type", "rest")
+        .config("spark.sql.catalog.temp_catalog.uri", "http://rest:8181")
+        .config("spark.sql.catalog.temp_catalog.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
+        .config("spark.sql.catalog.temp_catalog.warehouse", "s3://warehouse/")
+        .config("spark.sql.catalog.temp_catalog.s3.endpoint", "http://minio:9000")
+        .config("spark.sql.defaultCatalog", "primary_catalog")
+        .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")
+        .config("spark.hadoop.fs.s3a.access.key", "admin")
+        .config("spark.hadoop.fs.s3a.secret.key", "password")
+        .config("spark.hadoop.fs.s3a.path.style.access", "true")
+        .enableHiveSupport()
+        .getOrCreate()
+    )
+    spark.sparkContext.setLogLevel("WARN")
+    return spark
+
+
+def load_main_test_config(namespace: str) -> Dict:
+    config_path = os.path.join(MAIN_DIR, "config.json")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    config["source_table"] = f"primary_catalog.{namespace}.accounts_all"
+    config["destination_table"] = f"primary_catalog.{namespace}.summary"
+    config["latest_history_table"] = f"primary_catalog.{namespace}.latest_summary"
+
+    config["spark"] = {
+        "app_name": f"SummaryMainDocker_{namespace}",
+        "spark.sql.shuffle.partitions": "32",
+        "spark.default.parallelism": "32",
+    }
+
+    config.setdefault("performance", {})
+    config["performance"].setdefault("target_records_per_partition", 50000)
+    config["performance"].setdefault("min_partitions", 8)
+    config["performance"].setdefault("max_partitions", 256)
+
+    return config
+
+
+def _schema_sql(spec: List[tuple]) -> str:
+    return ",\n            ".join([f"{name} {sql_type}" for name, sql_type in spec])
+
+
+def reset_tables(spark: SparkSession, config: Dict):
+    source_table = config["source_table"]
+    summary_table = config["destination_table"]
+    latest_table = config["latest_history_table"]
+
+    namespace = source_table.rsplit(".", 1)[0]
+
+    spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {namespace}")
+    spark.sql("CREATE NAMESPACE IF NOT EXISTS temp_catalog.checkpointdb")
+
+    for table in [source_table, summary_table, latest_table]:
+        spark.sql(f"DROP TABLE IF EXISTS {table}")
+
+    for temp_case in ["case_1", "case_2", "case_3a", "case_3b", "case_4"]:
+        spark.sql(f"DROP TABLE IF EXISTS temp_catalog.checkpointdb.{temp_case}")
+
+    spark.sql(
+        f"""
+        CREATE TABLE {source_table} (
+            {_schema_sql(SOURCE_SCHEMA_SPEC)}
+        )
+        USING iceberg
+        PARTITIONED BY (rpt_as_of_mo)
+        """
+    )
+
+    spark.sql(
+        f"""
+        CREATE TABLE {summary_table} (
+            {_schema_sql(SUMMARY_SCHEMA_SPEC)}
+        )
+        USING iceberg
+        PARTITIONED BY (rpt_as_of_mo)
+        """
+    )
+
+    spark.sql(
+        f"""
+        CREATE TABLE {latest_table} (
+            {_schema_sql(SUMMARY_SCHEMA_SPEC)}
+        )
+        USING iceberg
+        """
+    )
+
+
+def month_start(month: str) -> date:
+    year, mon = month.split("-")
+    return date(int(year), int(mon), 1)
+
+
+def history(positions: Dict[int, object], length: int = HISTORY_LENGTH) -> List[object]:
+    arr: List[object] = [None] * length
+    for idx, value in positions.items():
+        arr[idx] = value
+    return arr
+
+
+def grid_from_history(values: List[Optional[object]], placeholder: str = "?") -> str:
+    return "".join([placeholder if v is None else str(v) for v in values])
+
+
+def build_source_row(
+    cons_acct_key: int,
+    rpt_as_of_mo: str,
+    base_ts: datetime,
+    balance: int,
+    actual_payment: int,
+    credit_limit: int = 10000,
+    days_past_due: int = 0,
+    past_due: int = 0,
+    asset_class: str = "A",
+    acct_type_dtl_cd: str = "5",
+) -> Dict:
+    record = {name: None for name, _ in SOURCE_SCHEMA_SPEC}
+    as_of_dt = month_start(rpt_as_of_mo)
+
+    record.update(
+        {
+            "cons_acct_key": cons_acct_key,
+            "bureau_mbr_id": f"MBR{cons_acct_key}",
+            "port_type_cd": "PT",
+            "acct_type_dtl_cd": acct_type_dtl_cd,
+            "acct_open_dt": date(as_of_dt.year - 1, as_of_dt.month, 1),
+            "acct_closed_dt": None,
+            "pymt_terms_cd": "01",
+            "pymt_terms_dtl_cd": "M",
+            "acct_dt": as_of_dt,
+            "acct_stat_cd": "1",
+            "acct_pymt_stat_cd": "0",
+            "acct_pymt_stat_dtl_cd": "0",
+            "acct_credit_ext_am": credit_limit,
+            "acct_bal_am": balance,
+            "past_due_am": past_due,
+            "actual_pymt_am": actual_payment,
+            "last_pymt_dt": None,
+            "schd_pymt_dt": as_of_dt,
+            "next_schd_pymt_am": actual_payment,
+            "collateral_cd": "N",
+            "orig_pymt_due_dt": as_of_dt,
+            "write_off_dt": None,
+            "write_off_am": 0,
+            "asset_class_cd_4in": asset_class,
+            "days_past_due_ct_4in": days_past_due,
+            "high_credit_am_4in": credit_limit,
+            "cash_limit_am_4in": 0,
+            "collateral_am_4in": 0,
+            "total_write_off_am_4in": 0,
+            "principal_write_off_am_4in": 0,
+            "settled_am_4in": 0,
+            "interest_rate_4in": 0,
+            "suit_filed_wilful_def_stat_cd_4in": "N",
+            "wo_settled_stat_cd_4in": "N",
+            "base_ts": base_ts,
+            "rpt_as_of_mo": rpt_as_of_mo,
+            "insert_ts": base_ts,
+            "update_ts": base_ts,
+        }
+    )
+
+    return record
+
+
+def build_summary_row(
+    cons_acct_key: int,
+    rpt_as_of_mo: str,
+    base_ts: datetime,
+    balance: int,
+    actual_payment: int,
+    credit_limit: int = 10000,
+    days_past_due: int = 0,
+    past_due: int = 0,
+    asset_class: str = "A",
+    payment_rating: str = "0",
+    balance_history: Optional[List[Optional[int]]] = None,
+    payment_history: Optional[List[Optional[int]]] = None,
+    credit_history: Optional[List[Optional[int]]] = None,
+    past_due_history: Optional[List[Optional[int]]] = None,
+    rating_history: Optional[List[Optional[str]]] = None,
+    dpd_history: Optional[List[Optional[int]]] = None,
+    asset_history: Optional[List[Optional[str]]] = None,
+) -> Dict:
+    record = {name: None for name, _ in SUMMARY_SCHEMA_SPEC}
+    as_of_dt = month_start(rpt_as_of_mo)
+
+    actual_payment_history = payment_history or history({0: actual_payment})
+    balance_am_history = balance_history or history({0: balance})
+    credit_limit_history = credit_history or history({0: credit_limit})
+    past_due_am_history = past_due_history or history({0: past_due})
+    payment_rating_history = rating_history or history({0: payment_rating})
+    days_past_due_history = dpd_history or history({0: days_past_due})
+    asset_class_history = asset_history or history({0: asset_class})
+
+    record.update(
+        {
+            "cons_acct_key": cons_acct_key,
+            "bureau_member_id": f"MBR{cons_acct_key}",
+            "portfolio_rating_type_cd": "PT",
+            "acct_type_dtl_cd": "5",
+            "open_dt": date(as_of_dt.year - 1, as_of_dt.month, 1),
+            "closed_dt": None,
+            "pymt_terms_cd": "01",
+            "pymt_terms_dtl_cd": "M",
+            "acct_dt": as_of_dt,
+            "acct_stat_cd": "1",
+            "acct_pymt_stat_cd": "0",
+            "acct_pymt_stat_dtl_cd": "0",
+            "credit_limit_am": credit_limit,
+            "balance_am": balance,
+            "past_due_am": past_due,
+            "actual_payment_am": actual_payment,
+            "last_payment_dt": None,
+            "schd_pymt_dt": as_of_dt,
+            "emi_amt": actual_payment,
+            "collateral_cd": "N",
+            "orig_pymt_due_dt": as_of_dt,
+            "dflt_status_dt": None,
+            "write_off_am": 0,
+            "asset_class_cd": asset_class,
+            "days_past_due": days_past_due,
+            "hi_credit_am": credit_limit,
+            "cash_limit_am": 0,
+            "collateral_am": 0,
+            "charge_off_am": 0,
+            "principal_write_off_am": 0,
+            "settled_am": 0,
+            "interest_rate": 0,
+            "suit_filed_willful_dflt": "N",
+            "written_off_and_settled_status": "N",
+            "base_ts": base_ts,
+            "rpt_as_of_mo": rpt_as_of_mo,
+            "orig_loan_am": credit_limit,
+            "payment_rating_cd": payment_rating,
+            "actual_payment_am_history": actual_payment_history,
+            "balance_am_history": balance_am_history,
+            "credit_limit_am_history": credit_limit_history,
+            "past_due_am_history": past_due_am_history,
+            "payment_rating_cd_history": payment_rating_history,
+            "days_past_due_history": days_past_due_history,
+            "asset_class_cd_4in_history": asset_class_history,
+            "payment_history_grid": grid_from_history(payment_rating_history),
+        }
+    )
+
+    return record
+
+
+def write_source_rows(spark: SparkSession, table: str, rows: List[Dict]):
+    if not rows:
+        return
+    df = spark.createDataFrame(rows, SOURCE_SCHEMA)
+    df.writeTo(table).append()
+
+
+def write_summary_rows(spark: SparkSession, table: str, rows: List[Dict]):
+    if not rows:
+        return
+    df = spark.createDataFrame(rows, SUMMARY_SCHEMA)
+    df.writeTo(table).append()
+
+
+def fetch_single_row(spark: SparkSession, table: str, cons_acct_key: int, rpt_as_of_mo: str):
+    rows = (
+        spark.table(table)
+        .filter(F.col("cons_acct_key") == cons_acct_key)
+        .filter(F.col("rpt_as_of_mo") == rpt_as_of_mo)
+        .collect()
+    )
+    if len(rows) != 1:
+        raise AssertionError(
+            f"Expected exactly 1 row in {table} for account={cons_acct_key}, month={rpt_as_of_mo}, got {len(rows)}"
+        )
+    return rows[0]
+
+
+__all__ = [
+    "create_spark_session",
+    "load_main_test_config",
+    "reset_tables",
+    "history",
+    "build_source_row",
+    "build_summary_row",
+    "write_source_rows",
+    "write_summary_rows",
+    "fetch_single_row",
+    "main_pipeline",
+]

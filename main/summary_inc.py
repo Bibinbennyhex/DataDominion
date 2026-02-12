@@ -971,7 +971,10 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
         # For each account+month, collect all backfill structs and the existing arrays
         # We use first() for existing arrays since they're the same for all rows of same account+month
         agg_exprs = [
-            F.collect_list(F.struct(*[F.col(c) for c in struct_fields])).alias("backfill_list")
+            F.collect_list(F.struct(*[F.col(c) for c in struct_fields])).alias("backfill_list"),
+            # Propagate latest source timestamp to future summaries updated by backfill
+            F.max(F.col("backfill_ts")).alias("new_base_ts"),
+            F.first(F.col("summary_ts")).alias("existing_summary_ts")
         ]
         for rc in rolling_columns:
             array_name = f"{rc['name']}_history"
@@ -1006,6 +1009,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
             SELECT 
                 {pk},
                 summary_month as {prt},
+                GREATEST(existing_summary_ts, new_base_ts) as {ts},
                 {', '.join(update_exprs)}
             FROM aggregated_backfills
         """)
@@ -1237,6 +1241,9 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
     latest_summary_table = config['latest_history_table']
     pk = config['primary_column']
     prt = config['partition_column']
+    ts = config['max_identifier_column']
+    rolling_columns = config.get('rolling_columns', [])
+    grid_columns = config.get('grid_columns', [])
 
     try:
         logger.info("-" * 60)
@@ -1265,17 +1272,33 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
         process_start_time = time.time()
 
         if spark.catalog.tableExists("temp_catalog.checkpointdb.case_3b"):
-            case_3a_df = spark.read.table('temp_catalog.checkpointdb.case_3a').select(pk,prt)
             case_3b_df = spark.read.table('temp_catalog.checkpointdb.case_3b')
-            case_3b_filtered_df = case_3b_df.join(case_3a_df,[pk, prt],"left_anti")
+
+            if spark.catalog.tableExists("temp_catalog.checkpointdb.case_3a"):
+                case_3a_df = spark.read.table('temp_catalog.checkpointdb.case_3a').select(pk, prt)
+                case_3b_filtered_df = case_3b_df.join(case_3a_df, [pk, prt], "left_anti")
+            else:
+                case_3b_filtered_df = case_3b_df
+
             case_3b_filtered_df.createOrReplaceTempView("case_3b")
+
+            history_cols = [f"{rc['name']}_history" for rc in rolling_columns]
+            grid_cols = [gc['name'] for gc in grid_columns]
+            update_cols = list(dict.fromkeys([ts] + history_cols + grid_cols))
+
+            update_set_exprs = []
+            for col_name in update_cols:
+                if col_name == ts:
+                    update_set_exprs.append(f"s.{col_name} = GREATEST(s.{col_name}, c.{col_name})")
+                else:
+                    update_set_exprs.append(f"s.{col_name} = c.{col_name}")
 
             spark.sql(
                 f"""           
                     MERGE INTO {summary_table} s
                     USING case_3b c
                     ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
-                    WHEN MATCHED THEN UPDATE SET *
+                    WHEN MATCHED THEN UPDATE SET {', '.join(update_set_exprs)}
                 """
             )    
 
