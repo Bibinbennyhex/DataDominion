@@ -31,6 +31,9 @@ AVG_RECORD_SIZE_BYTES = 200
 SNAPSHOT_INTERVAL = 12
 MAX_FILE_SIZE = 256
 HISTORY_LENGTH = 36
+TRACKER_SOURCE_SUMMARY = "summary"
+TRACKER_SOURCE_LATEST_SUMMARY = "latest_summary"
+TRACKER_SOURCE_COMMITTED = "committed_ingestion_watermark"
 
 
 def load_config(bucket, key):
@@ -41,6 +44,181 @@ def load_config(bucket, key):
     config = json.loads(obj["Body"].read().decode("utf-8"))
     
     return config
+
+
+def get_watermark_tracker_table(config: Dict[str, Any]) -> str:
+    """Resolve tracker table name from config or derive from destination namespace."""
+    explicit_table = config.get("watermark_tracker_table")
+    if explicit_table:
+        return explicit_table
+
+    destination_table = config["destination_table"]
+    if "." not in destination_table:
+        return f"{destination_table}_watermark_tracker"
+
+    namespace, _ = destination_table.rsplit(".", 1)
+    return f"{namespace}.summary_watermark_tracker"
+
+
+def _ensure_watermark_tracker_table(spark: SparkSession, tracker_table: str) -> None:
+    spark.sql(
+        f"""
+            CREATE TABLE IF NOT EXISTS {tracker_table} (
+                source_name STRING,
+                source_table STRING,
+                max_base_ts TIMESTAMP,
+                max_rpt_as_of_mo STRING,
+                updated_at TIMESTAMP
+            )
+            USING iceberg
+        """
+    )
+
+
+def _safe_min_datetime(a: Optional[datetime], b: Optional[datetime]) -> Optional[datetime]:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a if a <= b else b
+
+
+def _safe_min_month(a: Optional[str], b: Optional[str]) -> Optional[str]:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a if a <= b else b
+
+
+def get_committed_ingestion_watermark(
+    spark: SparkSession,
+    config: Dict[str, Any],
+    fallback_base_ts: Optional[datetime],
+    fallback_rpt_as_of_mo: Optional[str],
+) -> Tuple[Optional[datetime], Optional[str], str]:
+    """
+    Return committed ingestion watermark from tracker if available, else fallback.
+
+    This watermark is used to filter source increments and is advanced only after
+    successful end-to-end run completion.
+    """
+    tracker_table = get_watermark_tracker_table(config)
+
+    if spark.catalog.tableExists(tracker_table):
+        row = (
+            spark.table(tracker_table)
+            .filter(F.col("source_name") == TRACKER_SOURCE_COMMITTED)
+            .select("max_base_ts", "max_rpt_as_of_mo")
+            .limit(1)
+            .collect()
+        )
+        if row:
+            committed_ts = row[0]["max_base_ts"]
+            committed_month = row[0]["max_rpt_as_of_mo"]
+            if committed_ts is not None:
+                return committed_ts, committed_month, "tracker"
+
+    return fallback_base_ts, fallback_rpt_as_of_mo, "fallback_summary"
+
+
+def refresh_watermark_tracker(
+    spark: SparkSession,
+    config: Dict[str, Any],
+    mark_committed: bool = True,
+) -> None:
+    """
+    Persist latest watermark snapshot for summary and latest_summary tables.
+
+    Tracker schema:
+      source_name: 'summary' | 'latest_summary' | 'committed_ingestion_watermark'
+      source_table: fully qualified table name
+      max_base_ts: latest base_ts in source table
+      max_rpt_as_of_mo: latest rpt_as_of_mo in source table
+      updated_at: tracker refresh timestamp (UTC)
+    """
+    summary_table = config["destination_table"]
+    latest_summary_table = config["latest_history_table"]
+    prt = config["partition_column"]
+    ts = config["max_identifier_column"]
+    tracker_table = get_watermark_tracker_table(config)
+
+    _ensure_watermark_tracker_table(spark, tracker_table)
+
+    summary_stats = (
+        spark.table(summary_table)
+        .agg(
+            F.max(F.col(ts)).alias("max_base_ts"),
+            F.max(F.col(prt)).alias("max_rpt_as_of_mo"),
+        )
+        .first()
+    )
+
+    latest_summary_stats = (
+        spark.table(latest_summary_table)
+        .agg(
+            F.max(F.col(ts)).alias("max_base_ts"),
+            F.max(F.col(prt)).alias("max_rpt_as_of_mo"),
+        )
+        .first()
+    )
+
+    update_rows = [
+        (
+            TRACKER_SOURCE_SUMMARY,
+            summary_table,
+            summary_stats["max_base_ts"],
+            summary_stats["max_rpt_as_of_mo"],
+            datetime.utcnow(),
+        ),
+        (
+            TRACKER_SOURCE_LATEST_SUMMARY,
+            latest_summary_table,
+            latest_summary_stats["max_base_ts"],
+            latest_summary_stats["max_rpt_as_of_mo"],
+            datetime.utcnow(),
+        ),
+    ]
+
+    if mark_committed:
+        committed_base_ts = _safe_min_datetime(
+            summary_stats["max_base_ts"],
+            latest_summary_stats["max_base_ts"],
+        )
+        committed_rpt_as_of_mo = _safe_min_month(
+            summary_stats["max_rpt_as_of_mo"],
+            latest_summary_stats["max_rpt_as_of_mo"],
+        )
+        update_rows.append(
+            (
+                TRACKER_SOURCE_COMMITTED,
+                config["source_table"],
+                committed_base_ts,
+                committed_rpt_as_of_mo,
+                datetime.utcnow(),
+            )
+        )
+
+    update_df = spark.createDataFrame(
+        update_rows,
+        schema="source_name STRING, source_table STRING, max_base_ts TIMESTAMP, max_rpt_as_of_mo STRING, updated_at TIMESTAMP",
+    )
+    update_df.createOrReplaceTempView("watermark_tracker_updates")
+
+    spark.sql(
+        f"""
+            MERGE INTO {tracker_table} t
+            USING watermark_tracker_updates u
+            ON t.source_name = u.source_name
+            WHEN MATCHED THEN UPDATE SET *
+            WHEN NOT MATCHED THEN INSERT *
+        """
+    )
+
+    logger.info(
+        f"Refreshed watermark tracker table: {tracker_table} "
+        f"(mark_committed={mark_committed})"
+    )
 
 
 def validate_config(config: Dict[str, Any]) -> bool:
@@ -271,7 +449,7 @@ def load_and_classify_accounts(spark: SparkSession, config: Dict[str, Any]):
     latest_summary_table = config['latest_history_table']
 
     if spark.catalog.tableExists(destination_table):
-        max_base_ts = spark.table(destination_table) \
+        fallback_max_base_ts = spark.table(destination_table) \
             .agg(F.max(ts).alias("max_base_ts")) \
             .first()["max_base_ts"]
 
@@ -292,6 +470,19 @@ def load_and_classify_accounts(spark: SparkSession, config: Dict[str, Any]):
     else:
         raise ValueError(f"{destination_table} does not exist")
 
+    effective_max_base_ts, _, watermark_source = get_committed_ingestion_watermark(
+        spark,
+        config,
+        fallback_max_base_ts,
+        max_month_destination,
+    )
+    if effective_max_base_ts is None:
+        effective_max_base_ts = datetime(1900, 1, 1)
+    logger.info(
+        f"Using ingestion watermark ({watermark_source}) "
+        f"for source filter: {ts} > {effective_max_base_ts}"
+    )
+
     next_month = (datetime.strptime(max_month_destination, "%Y-%m") + relativedelta(months=1)).strftime("%Y-%m")
 
 
@@ -301,10 +492,10 @@ def load_and_classify_accounts(spark: SparkSession, config: Dict[str, Any]):
         .filter(
                 (F.col(prt) >= f"{min_month_destination}")
                 & (F.col(prt) < f"{next_month}")
-                & (F.col(ts) > max_base_ts)
+                & (F.col(ts) > F.lit(effective_max_base_ts))
             )
     
-    logging.info(f"Reading from {source_table} - ({prt} < {next_month}) & ({ts} > {max_base_ts}")
+    logging.info(f"Reading from {source_table} - ({prt} < {next_month}) & ({ts} > {effective_max_base_ts}")
 
     # Prepare source data (mappings, transformations, deduplication)
     accounts_prepared = prepare_source_data(accounts_df, config)
@@ -1244,6 +1435,8 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
     ts = config['max_identifier_column']
     rolling_columns = config.get('rolling_columns', [])
     grid_columns = config.get('grid_columns', [])
+    history_cols = [f"{rc['name']}_history" for rc in rolling_columns]
+    grid_cols = [gc['name'] for gc in grid_columns]
 
     try:
         logger.info("-" * 60)
@@ -1282,8 +1475,6 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
 
             case_3b_filtered_df.createOrReplaceTempView("case_3b")
 
-            history_cols = [f"{rc['name']}_history" for rc in rolling_columns]
-            grid_cols = [gc['name'] for gc in grid_columns]
             update_cols = list(dict.fromkeys([ts] + history_cols + grid_cols))
 
             update_set_exprs = []
@@ -1307,7 +1498,7 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
         logger.info(f"Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: {process_total_minutes:.2f} minutes")
         logger.info("-" * 60)
 
-        logger.info("APPENDING RECORDS:")
+        logger.info("MERGING NEW/BULK RECORDS:")
         process_start_time = time.time()
 
         append_tables = ["temp_catalog.checkpointdb.case_1","temp_catalog.checkpointdb.case_4"]
@@ -1320,33 +1511,141 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
         if dfs:
             append_df = reduce(lambda a, b: a.unionByName(b), dfs)
 
-            append_df.repartition(
-                get_write_partitions(spark, config, expected_rows=expected_rows_append, stage="summary_append_case_1_4")
-            ).writeTo(summary_table).append()
+            merge_window = Window.partitionBy(pk, prt).orderBy(F.col(ts).desc())
+            append_merge_df = (
+                append_df
+                .withColumn("_rn", F.row_number().over(merge_window))
+                .filter(F.col("_rn") == 1)
+                .drop("_rn")
+            )
+
+            append_merge_df = append_merge_df.repartition(
+                get_write_partitions(spark, config, expected_rows=expected_rows_append, stage="summary_merge_case_1_4")
+            )
+            append_merge_df.createOrReplaceTempView("case_1_4_merge")
+
+            spark.sql(
+                f"""
+                    MERGE INTO {summary_table} s
+                    USING case_1_4_merge c
+                    ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
+                    WHEN MATCHED AND c.{ts} >= s.{ts} THEN UPDATE SET *
+                    WHEN NOT MATCHED THEN INSERT *
+                """
+            )
 
             process_end_time = time.time()
             process_total_minutes = (process_end_time - process_start_time) / 60
-            logger.info(f"Updated Summary | APPENDED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: {process_total_minutes:.2f} minutes")
+            logger.info(f"Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: {process_total_minutes:.2f} minutes")
             logger.info("-" * 60)
 
             logger.info("UPDATING LATEST SUMMARY:")
             process_start_time = time.time()
             # Get Latest from append_df - case I & IV for appending to latest_summary
-            window_spec = Window.partitionBy(pk).orderBy(F.col(prt).desc())
+            window_spec = Window.partitionBy(pk).orderBy(F.col(prt).desc(), F.col(ts).desc())
             latest_append_df = (
-                append_df
+                append_merge_df
                 .withColumn("_rn", F.row_number().over(window_spec))
                 .filter(F.col("_rn") == 1)
                 .drop("_rn")
             )
 
-            latest_append_df.writeTo(latest_summary_table).append()
-            logger.info(f"Updated latest_summary | APPENDED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: {process_total_minutes:.2f} minutes")
+            latest_append_df.createOrReplaceTempView("latest_case_1_4")
+
+            spark.sql(
+                f"""
+                    MERGE INTO {latest_summary_table} s
+                    USING latest_case_1_4 c
+                    ON s.{pk} = c.{pk}
+                    WHEN MATCHED AND (
+                        s.{prt} < c.{prt}
+                        OR (s.{prt} = c.{prt} AND s.{ts} <= c.{ts})
+                    ) THEN UPDATE SET *
+                    WHEN NOT MATCHED THEN INSERT *
+                """
+            )
+
+            logger.info(f"Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: {process_total_minutes:.2f} minutes")
             logger.info("-" * 60)
         else:
             process_end_time = time.time()
             process_total_minutes = (process_end_time - process_start_time) / 60
-            logger.info(f"No Case I/IV records to append | Time Elapsed: {process_total_minutes:.2f} minutes")
+            logger.info(f"No Case I/IV records to merge | Time Elapsed: {process_total_minutes:.2f} minutes")
+            logger.info("-" * 60)
+
+        logger.info("UPDATING LATEST SUMMARY FROM CASE III:")
+        process_start_time = time.time()
+
+        update_cols = list(dict.fromkeys([prt, ts] + history_cols + grid_cols))
+        case3_select_cols = [pk] + update_cols
+
+        case_3b_latest_df = None
+        if spark.catalog.tableExists("temp_catalog.checkpointdb.case_3b"):
+            case_3b_latest_df = spark.read.table("temp_catalog.checkpointdb.case_3b").select(*case3_select_cols)
+            case_3b_latest_df = (
+                case_3b_latest_df
+                .withColumn("_rn", F.row_number().over(Window.partitionBy(pk).orderBy(F.col(prt).desc(), F.col(ts).desc())))
+                .filter(F.col("_rn") == 1)
+                .drop("_rn")
+            )
+
+        case_3a_latest_df = None
+        if spark.catalog.tableExists("temp_catalog.checkpointdb.case_3a"):
+            case_3a_latest_df = spark.read.table("temp_catalog.checkpointdb.case_3a").select(*case3_select_cols)
+            if case_3b_latest_df is not None:
+                case_3a_latest_df = case_3a_latest_df.join(
+                    case_3b_latest_df.select(pk).distinct(),
+                    [pk],
+                    "left_anti",
+                )
+            case_3a_latest_df = (
+                case_3a_latest_df
+                .withColumn("_rn", F.row_number().over(Window.partitionBy(pk).orderBy(F.col(prt).desc(), F.col(ts).desc())))
+                .filter(F.col("_rn") == 1)
+                .drop("_rn")
+            )
+
+        case3_latest_df = None
+        if case_3b_latest_df is not None:
+            case3_latest_df = case_3b_latest_df
+        if case_3a_latest_df is not None:
+            case3_latest_df = case_3a_latest_df if case3_latest_df is None else case3_latest_df.unionByName(case_3a_latest_df)
+
+        if case3_latest_df is not None:
+            case3_latest_df = (
+                case3_latest_df
+                .withColumn("_rn", F.row_number().over(Window.partitionBy(pk).orderBy(F.col(prt).desc(), F.col(ts).desc())))
+                .filter(F.col("_rn") == 1)
+                .drop("_rn")
+            )
+            case3_latest_df.createOrReplaceTempView("latest_case_3")
+
+            update_set_exprs = []
+            for col_name in update_cols:
+                if col_name == ts:
+                    update_set_exprs.append(f"s.{col_name} = GREATEST(s.{col_name}, c.{col_name})")
+                else:
+                    update_set_exprs.append(f"s.{col_name} = c.{col_name}")
+
+            spark.sql(
+                f"""
+                    MERGE INTO {latest_summary_table} s
+                    USING latest_case_3 c
+                    ON s.{pk} = c.{pk}
+                    WHEN MATCHED AND (
+                        s.{prt} < c.{prt}
+                        OR (s.{prt} = c.{prt} AND s.{ts} <= c.{ts})
+                    ) THEN UPDATE SET {', '.join(update_set_exprs)}
+                """
+            )
+            process_end_time = time.time()
+            process_total_minutes = (process_end_time - process_start_time) / 60
+            logger.info(f"Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: {process_total_minutes:.2f} minutes")
+            logger.info("-" * 60)
+        else:
+            process_end_time = time.time()
+            process_total_minutes = (process_end_time - process_start_time) / 60
+            logger.info(f"No Case III candidates for latest_summary | Time Elapsed: {process_total_minutes:.2f} minutes")
             logger.info("-" * 60)
 
 
@@ -1360,6 +1659,7 @@ def write_forward_results(spark: SparkSession, config: Dict[str, Any], expected_
     latest_summary_table = config['latest_history_table']
     pk = config['primary_column']
     prt = config['partition_column']
+    ts = config['max_identifier_column']
         
     try:
         logger.info("-" * 60)
@@ -1368,13 +1668,32 @@ def write_forward_results(spark: SparkSession, config: Dict[str, Any], expected_
 
         if spark.catalog.tableExists('temp_catalog.checkpointdb.case_2'):
             case_2_df = spark.read.table('temp_catalog.checkpointdb.case_2')
-            case_2_df.repartition(
-                get_write_partitions(spark, config, expected_rows=expected_rows, stage="summary_append_case_2")
-            ).writeTo(summary_table).append()
+            merge_window = Window.partitionBy(pk, prt).orderBy(F.col(ts).desc())
+            case_2_merge_df = (
+                case_2_df
+                .withColumn("_rn", F.row_number().over(merge_window))
+                .filter(F.col("_rn") == 1)
+                .drop("_rn")
+            )
+
+            case_2_merge_df = case_2_merge_df.repartition(
+                get_write_partitions(spark, config, expected_rows=expected_rows, stage="summary_merge_case_2")
+            )
+            case_2_merge_df.createOrReplaceTempView("case_2_summary")
+
+            spark.sql(
+                f"""
+                    MERGE INTO {summary_table} s
+                    USING case_2_summary c
+                    ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
+                    WHEN MATCHED AND c.{ts} >= s.{ts} THEN UPDATE SET *
+                    WHEN NOT MATCHED THEN INSERT *
+                """
+            )
 
             process_end_time = time.time()
             process_total_minutes = (process_end_time - process_start_time) / 60
-            logger.info(f"Updated Summary | APPENDED - CASE II (Forward Records) | Time Elapsed: {process_total_minutes:.2f} minutes")
+            logger.info(f"Updated Summary | MERGED - CASE II (Forward Records) | Time Elapsed: {process_total_minutes:.2f} minutes")
             logger.info("-" * 60)
 
 
@@ -1382,7 +1701,7 @@ def write_forward_results(spark: SparkSession, config: Dict[str, Any], expected_
             # Get Latest from case 2 for merging to latest_summary
             window_spec = Window.partitionBy(pk).orderBy(F.col(prt).desc())
             latest_case_2_df = (
-                case_2_df
+                case_2_merge_df
                 .withColumn("_rn", F.row_number().over(window_spec))
                 .filter(F.col("_rn") == 1)
                 .drop("_rn")
@@ -1394,8 +1713,11 @@ def write_forward_results(spark: SparkSession, config: Dict[str, Any], expected_
                 f"""           
                     MERGE INTO {latest_summary_table} s
                     USING case_2 c
-                    ON s.{pk} = c.{pk} AND s.{prt} < c.{prt}
-                    WHEN MATCHED THEN UPDATE SET *
+                    ON s.{pk} = c.{pk}
+                    WHEN MATCHED AND (
+                        c.{prt} > s.{prt}
+                        OR (c.{prt} = s.{prt} AND c.{ts} >= s.{ts})
+                    ) THEN UPDATE SET *
                 """
             )
 
@@ -1523,8 +1845,13 @@ def run_pipeline(spark: SparkSession, config: Dict[str, Any]):
 
         logger.info("PROCESS COMPLETED - Deleting the persisted classification results")
         classified.unpersist()
+        refresh_watermark_tracker(spark, config, mark_committed=True)
 
     except Exception as e:
+        try:
+            refresh_watermark_tracker(spark, config, mark_committed=False)
+        except Exception as tracker_error:
+            logger.warning(f"Failed to refresh watermark tracker after pipeline error: {tracker_error}")
         logger.error(f"Pipeline failed: {e}", exc_info=True)
         raise
 

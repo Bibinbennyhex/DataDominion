@@ -1,0 +1,2389 @@
+====================================================================================================
+RUNNING simple_test.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:07:40 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:07:41 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+[PASS] simple_test
+2026-02-13 14:07:48,198 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_main_all_cases.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:07:52 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:07:53 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+[SETUP] Resetting tables...
+[SETUP] Seeding existing summary/latest data...
+[SETUP] Loading incoming source batch...
+[RUN] Executing main pipeline...
+2026-02-13 14:08:08,216 INFO: Cleaned case_1
+2026-02-13 14:08:08,249 INFO: Cleaned case_2
+2026-02-13 14:08:08,277 INFO: Cleaned case_3a
+2026-02-13 14:08:08,303 INFO: Cleaned case_3b
+2026-02-13 14:08:08,325 INFO: Cleaned case_4
+2026-02-13 14:08:08,325 INFO: CLEANUP COMPLETED
+2026-02-13 14:08:08,325 INFO: ============================================================
+2026-02-13 14:08:08,326 INFO: ================================================================================
+2026-02-13 14:08:08,326 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:08:08,326 INFO: ================================================================================
+2026-02-13 14:08:08,326 INFO: ================================================================================
+2026-02-13 14:08:08,326 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:08:08,326 INFO: ================================================================================
+2026-02-13 14:08:10,446 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2026-01-01 00:00:00
+2026-02-13 14:08:10,447 INFO: Loading accounts from primary_catalog.main_test.accounts_all
+2026-02-13 14:08:10,602 INFO: Reading from primary_catalog.main_test.accounts_all - (rpt_as_of_mo < 2026-02) & (base_ts > 2026-01-01 00:00:00
+2026-02-13 14:08:10,602 INFO: Preparing source data...
+2026-02-13 14:08:10,810 INFO: Applied 36 column mappings
+2026-02-13 14:08:11,272 INFO: Applied 7 column transformations
+2026-02-13 14:08:11,395 INFO: Created 2 inferred columns
+2026-02-13 14:08:12,014 INFO: Validated 7 date columns
+2026-02-13 14:08:12,196 INFO: Source data preparation complete
+2026-02-13 14:08:12,393 INFO: Loading summary metadata from primary_catalog.main_test.latest_summary
+2026-02-13 14:08:12,463 INFO: Loaded metadata for existing accounts
+2026-02-13 14:08:12,463 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:08:20,924 INFO: ------------------------------------------------------------
+2026-02-13 14:08:20,924 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:08:20,925 INFO:   CASE_I: 2 records
+2026-02-13 14:08:20,926 INFO:   CASE_IV: 1 records
+2026-02-13 14:08:20,927 INFO:   CASE_III: 1 records
+2026-02-13 14:08:20,927 INFO:   CASE_II: 1 records
+2026-02-13 14:08:20,927 INFO: ------------------------------------------------------------
+2026-02-13 14:08:20,928 INFO: Classification | Time Elapsed: 0.21 minutes
+2026-02-13 14:08:20,974 INFO: 
+>>> PROCESSING BACKFILL (1 records)
+2026-02-13 14:08:20,975 INFO: ================================================================================
+2026-02-13 14:08:20,975 INFO: STEP 2c: Process Case III (Backfill)
+2026-02-13 14:08:20,975 INFO: ================================================================================
+2026-02-13 14:08:20,976 INFO: CASE III - Processing backfill records
+2026-02-13 14:08:23,536 INFO: Backfill month range: 2025-12 to 2025-12
+2026-02-13 14:08:23,536 INFO: Reading summary partitions from 2022-12 to 2028-12
+2026-02-13 14:08:23,568 INFO: Applied partition filter: rpt_as_of_mo BETWEEN '2022-12' AND '2028-12'
+2026-02-13 14:08:23,971 INFO: Part A: Creating new summary rows for backfill months...
+2026-02-13 14:08:24,805 INFO: Write partitions [case_3a_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:08:38,769 INFO: Case III Part A Generated | Time Elapsed: 0.30 minutes
+2026-02-13 14:08:38,769 INFO: ------------------------------------------------------------
+2026-02-13 14:08:38,769 INFO: Part B: Updating future summary rows...
+2026-02-13 14:08:42,373 INFO: Write partitions [case_3b_temp]: 200 (base=200, expected_rows=None, scale=1.0)
+2026-02-13 14:08:48,494 INFO: Case III Part B Generated | Time Elapsed: 0.16 minutes
+2026-02-13 14:08:48,495 INFO: ------------------------------------------------------------
+2026-02-13 14:08:48,513 INFO: 
+>>> PROCESSING NEW ACCOUNTS (2 records)
+2026-02-13 14:08:48,513 INFO: ================================================================================
+2026-02-13 14:08:48,513 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:08:48,513 INFO: ================================================================================
+2026-02-13 14:08:48,514 INFO: Processing new accounts
+2026-02-13 14:08:49,104 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=2, scale=1.0)
+2026-02-13 14:08:52,485 INFO: Case I Generated | Time Elapsed: 0.07 minutes
+2026-02-13 14:08:52,485 INFO: ------------------------------------------------------------
+2026-02-13 14:08:52,497 INFO: 
+>>> PROCESSING BULK HISTORICAL (1 records)
+2026-02-13 14:08:52,497 INFO: ================================================================================
+2026-02-13 14:08:52,497 INFO: STEP 2d: Process Case IV (Bulk Historical Load)
+2026-02-13 14:08:52,497 INFO: ================================================================================
+2026-02-13 14:08:52,497 INFO: Processing bulk historical records
+2026-02-13 14:08:52,539 INFO: Building complete history using window functions
+2026-02-13 14:08:55,388 INFO: Write partitions [case_4_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:09:08,425 INFO: Case IV Generated | Time Elapsed: 0.27 minutes
+2026-02-13 14:09:08,425 INFO: ------------------------------------------------------------
+2026-02-13 14:09:08,444 INFO: ------------------------------------------------------------
+2026-02-13 14:09:08,444 INFO: MERGING RECORDS:
+2026-02-13 14:09:10,069 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.03 minutes
+2026-02-13 14:09:10,069 INFO: ------------------------------------------------------------
+2026-02-13 14:09:11,661 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.03 minutes
+2026-02-13 14:09:11,661 INFO: ------------------------------------------------------------
+2026-02-13 14:09:11,661 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:09:11,773 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=3, scale=1.0)
+2026-02-13 14:09:14,366 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.05 minutes
+2026-02-13 14:09:14,366 INFO: ------------------------------------------------------------
+2026-02-13 14:09:14,366 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:09:16,249 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.05 minutes
+2026-02-13 14:09:16,250 INFO: ------------------------------------------------------------
+2026-02-13 14:09:16,250 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:09:19,286 INFO: Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: 0.05 minutes
+2026-02-13 14:09:19,286 INFO: ------------------------------------------------------------
+2026-02-13 14:09:19,304 INFO: 
+>>> PROCESSING FORWARD ENTRIES (1 records)
+2026-02-13 14:09:19,305 INFO: ================================================================================
+2026-02-13 14:09:19,305 INFO: STEP 2b: Process Case II (Forward Entries)
+2026-02-13 14:09:19,305 INFO: ================================================================================
+2026-02-13 14:09:19,305 INFO: Processing forward entries
+2026-02-13 14:09:19,340 INFO: Loading latest summary for Affected Accounts
+2026-02-13 14:09:19,673 INFO: Write partitions [case_2_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:09:29,200 INFO: Case II Generated | Time Elapsed: 0.16 minutes
+2026-02-13 14:09:29,200 INFO: ------------------------------------------------------------
+2026-02-13 14:09:29,200 INFO: ------------------------------------------------------------
+2026-02-13 14:09:29,200 INFO: MERGING FORWARD RECORDS:
+2026-02-13 14:09:29,252 INFO: Write partitions [summary_merge_case_2]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:09:31,199 INFO: Updated Summary | MERGED - CASE II (Forward Records) | Time Elapsed: 0.03 minutes
+2026-02-13 14:09:31,200 INFO: ------------------------------------------------------------
+2026-02-13 14:09:33,208 INFO: Updated latest_summary | MERGE - CASE II (Forward Records) | Time Elapsed: 0.03 minutes
+2026-02-13 14:09:33,208 INFO: ------------------------------------------------------------
+2026-02-13 14:09:33,209 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:09:34,664 INFO: Refreshed watermark tracker table: primary_catalog.main_test.summary_watermark_tracker (mark_committed=True)
+[ASSERT] Validating outputs...
+[PASS] test_main_all_cases
+2026-02-13 14:09:36,511 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_main_base_ts_propagation.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:09:42 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:09:43 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+[SETUP] Resetting tables...
+[SETUP] Seeding existing summary/latest data...
+[SETUP] Loading one backfill input record...
+[RUN] Executing main pipeline...
+2026-02-13 14:09:56,869 INFO: Cleaned case_1
+2026-02-13 14:09:56,897 INFO: Cleaned case_2
+2026-02-13 14:09:56,923 INFO: Cleaned case_3a
+2026-02-13 14:09:56,945 INFO: Cleaned case_3b
+2026-02-13 14:09:56,969 INFO: Cleaned case_4
+2026-02-13 14:09:56,969 INFO: CLEANUP COMPLETED
+2026-02-13 14:09:56,970 INFO: ============================================================
+2026-02-13 14:09:56,970 INFO: ================================================================================
+2026-02-13 14:09:56,970 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:09:56,970 INFO: ================================================================================
+2026-02-13 14:09:56,970 INFO: ================================================================================
+2026-02-13 14:09:56,970 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:09:56,970 INFO: ================================================================================
+2026-02-13 14:09:59,539 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2026-01-05 08:00:00
+2026-02-13 14:09:59,540 INFO: Loading accounts from primary_catalog.main_test_base_ts.accounts_all
+2026-02-13 14:09:59,754 INFO: Reading from primary_catalog.main_test_base_ts.accounts_all - (rpt_as_of_mo < 2026-02) & (base_ts > 2026-01-05 08:00:00
+2026-02-13 14:09:59,754 INFO: Preparing source data...
+2026-02-13 14:09:59,963 INFO: Applied 36 column mappings
+2026-02-13 14:10:00,374 INFO: Applied 7 column transformations
+2026-02-13 14:10:00,515 INFO: Created 2 inferred columns
+2026-02-13 14:10:01,096 INFO: Validated 7 date columns
+2026-02-13 14:10:01,208 INFO: Source data preparation complete
+2026-02-13 14:10:01,366 INFO: Loading summary metadata from primary_catalog.main_test_base_ts.latest_summary
+2026-02-13 14:10:01,405 INFO: Loaded metadata for existing accounts
+2026-02-13 14:10:01,405 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:10:09,161 INFO: ------------------------------------------------------------
+2026-02-13 14:10:09,161 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:10:09,161 INFO:   CASE_III: 1 records
+2026-02-13 14:10:09,161 INFO: ------------------------------------------------------------
+2026-02-13 14:10:09,161 INFO: Classification | Time Elapsed: 0.20 minutes
+2026-02-13 14:10:09,199 INFO: 
+>>> PROCESSING BACKFILL (1 records)
+2026-02-13 14:10:09,199 INFO: ================================================================================
+2026-02-13 14:10:09,199 INFO: STEP 2c: Process Case III (Backfill)
+2026-02-13 14:10:09,199 INFO: ================================================================================
+2026-02-13 14:10:09,200 INFO: CASE III - Processing backfill records
+2026-02-13 14:10:11,375 INFO: Backfill month range: 2025-12 to 2025-12
+2026-02-13 14:10:11,375 INFO: Reading summary partitions from 2022-12 to 2028-12
+2026-02-13 14:10:11,411 INFO: Applied partition filter: rpt_as_of_mo BETWEEN '2022-12' AND '2028-12'
+2026-02-13 14:10:11,724 INFO: Part A: Creating new summary rows for backfill months...
+2026-02-13 14:10:12,872 INFO: Write partitions [case_3a_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:10:24,528 INFO: Case III Part A Generated | Time Elapsed: 0.26 minutes
+2026-02-13 14:10:24,529 INFO: ------------------------------------------------------------
+2026-02-13 14:10:24,529 INFO: Part B: Updating future summary rows...
+2026-02-13 14:10:27,224 INFO: Write partitions [case_3b_temp]: 200 (base=200, expected_rows=None, scale=1.0)
+2026-02-13 14:10:33,071 INFO: Case III Part B Generated | Time Elapsed: 0.14 minutes
+2026-02-13 14:10:33,071 INFO: ------------------------------------------------------------
+2026-02-13 14:10:33,098 INFO: ------------------------------------------------------------
+2026-02-13 14:10:33,098 INFO: MERGING RECORDS:
+2026-02-13 14:10:40,949 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.13 minutes
+2026-02-13 14:10:40,949 INFO: ------------------------------------------------------------
+2026-02-13 14:10:36,071 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: -0.08 minutes
+2026-02-13 14:10:36,071 INFO: ------------------------------------------------------------
+2026-02-13 14:10:36,072 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:10:36,092 INFO: No Case I/IV records to merge | Time Elapsed: 0.00 minutes
+2026-02-13 14:10:36,093 INFO: ------------------------------------------------------------
+2026-02-13 14:10:36,093 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:10:39,691 INFO: Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: 0.06 minutes
+2026-02-13 14:10:39,691 INFO: ------------------------------------------------------------
+2026-02-13 14:10:39,717 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:10:41,409 INFO: Refreshed watermark tracker table: primary_catalog.main_test_base_ts.summary_watermark_tracker (mark_committed=True)
+[ASSERT] Validating base_ts propagation and array patch...
+[PASS] test_main_base_ts_propagation
+2026-02-13 14:10:42,984 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING run_backfill_test.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:10:47 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:10:48 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:11:04,837 INFO: Cleaned case_1
+2026-02-13 14:11:04,858 INFO: Cleaned case_2
+2026-02-13 14:11:04,873 INFO: Cleaned case_3a
+2026-02-13 14:11:04,888 INFO: Cleaned case_3b
+2026-02-13 14:11:04,907 INFO: Cleaned case_4
+2026-02-13 14:11:04,907 INFO: CLEANUP COMPLETED
+2026-02-13 14:11:04,907 INFO: ============================================================
+2026-02-13 14:11:04,907 INFO: ================================================================================
+2026-02-13 14:11:04,907 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:11:04,908 INFO: ================================================================================
+2026-02-13 14:11:04,908 INFO: ================================================================================
+2026-02-13 14:11:04,908 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:11:04,908 INFO: ================================================================================
+2026-02-13 14:11:07,566 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2025-12-01 00:00:00
+2026-02-13 14:11:07,568 INFO: Loading accounts from primary_catalog.main_backfill.accounts_all
+2026-02-13 14:11:07,760 INFO: Reading from primary_catalog.main_backfill.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2025-12-01 00:00:00
+2026-02-13 14:11:07,761 INFO: Preparing source data...
+2026-02-13 14:11:08,107 INFO: Applied 36 column mappings
+2026-02-13 14:11:08,497 INFO: Applied 7 column transformations
+2026-02-13 14:11:08,668 INFO: Created 2 inferred columns
+2026-02-13 14:11:09,415 INFO: Validated 7 date columns
+2026-02-13 14:11:09,615 INFO: Source data preparation complete
+2026-02-13 14:11:09,737 INFO: Loading summary metadata from primary_catalog.main_backfill.latest_summary
+2026-02-13 14:11:09,785 INFO: Loaded metadata for existing accounts
+2026-02-13 14:11:09,785 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:11:17,380 INFO: ------------------------------------------------------------
+2026-02-13 14:11:17,380 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:11:17,380 INFO:   CASE_III: 1 records
+2026-02-13 14:11:17,381 INFO: ------------------------------------------------------------
+2026-02-13 14:11:17,381 INFO: Classification | Time Elapsed: 0.21 minutes
+2026-02-13 14:11:17,408 INFO: 
+>>> PROCESSING BACKFILL (1 records)
+2026-02-13 14:11:17,408 INFO: ================================================================================
+2026-02-13 14:11:17,408 INFO: STEP 2c: Process Case III (Backfill)
+2026-02-13 14:11:17,408 INFO: ================================================================================
+2026-02-13 14:11:17,408 INFO: CASE III - Processing backfill records
+2026-02-13 14:11:25,843 INFO: Backfill month range: 2025-12 to 2025-12
+2026-02-13 14:11:25,844 INFO: Reading summary partitions from 2022-12 to 2028-12
+2026-02-13 14:11:25,872 INFO: Applied partition filter: rpt_as_of_mo BETWEEN '2022-12' AND '2028-12'
+2026-02-13 14:11:19,776 INFO: Part A: Creating new summary rows for backfill months...
+2026-02-13 14:11:20,954 INFO: Write partitions [case_3a_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:11:33,334 INFO: Case III Part A Generated | Time Elapsed: 0.27 minutes
+2026-02-13 14:11:33,334 INFO: ------------------------------------------------------------
+2026-02-13 14:11:33,334 INFO: Part B: Updating future summary rows...
+2026-02-13 14:11:35,825 INFO: Write partitions [case_3b_temp]: 200 (base=200, expected_rows=None, scale=1.0)
+2026-02-13 14:11:40,832 INFO: Case III Part B Generated | Time Elapsed: 0.12 minutes
+2026-02-13 14:11:40,833 INFO: ------------------------------------------------------------
+2026-02-13 14:11:40,876 INFO: ------------------------------------------------------------
+2026-02-13 14:11:40,876 INFO: MERGING RECORDS:
+2026-02-13 14:11:42,811 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.03 minutes
+2026-02-13 14:11:42,812 INFO: ------------------------------------------------------------
+2026-02-13 14:11:44,594 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.03 minutes
+2026-02-13 14:11:44,594 INFO: ------------------------------------------------------------
+2026-02-13 14:11:44,594 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:11:44,613 INFO: No Case I/IV records to merge | Time Elapsed: 0.00 minutes
+2026-02-13 14:11:44,614 INFO: ------------------------------------------------------------
+2026-02-13 14:11:44,614 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:11:47,670 INFO: Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: 0.05 minutes
+2026-02-13 14:11:47,670 INFO: ------------------------------------------------------------
+2026-02-13 14:11:47,708 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:11:56,056 INFO: Refreshed watermark tracker table: primary_catalog.main_backfill.summary_watermark_tracker (mark_committed=True)
+[PASS] backfill
+2026-02-13 14:11:51,358 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_all_scenarios.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:11:56 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:11:57 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:12:15,661 INFO: Cleaned case_1
+2026-02-13 14:12:15,680 INFO: Cleaned case_2
+2026-02-13 14:12:15,696 INFO: Cleaned case_3a
+2026-02-13 14:12:15,715 INFO: Cleaned case_3b
+2026-02-13 14:12:15,738 INFO: Cleaned case_4
+2026-02-13 14:12:15,739 INFO: CLEANUP COMPLETED
+2026-02-13 14:12:15,739 INFO: ============================================================
+2026-02-13 14:12:15,739 INFO: ================================================================================
+2026-02-13 14:12:15,739 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:12:15,739 INFO: ================================================================================
+2026-02-13 14:12:15,739 INFO: ================================================================================
+2026-02-13 14:12:15,739 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:12:15,739 INFO: ================================================================================
+2026-02-13 14:12:18,385 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2025-12-01 00:00:00
+2026-02-13 14:12:18,386 INFO: Loading accounts from primary_catalog.main_all_scenarios.accounts_all
+2026-02-13 14:12:18,542 INFO: Reading from primary_catalog.main_all_scenarios.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2025-12-01 00:00:00
+2026-02-13 14:12:18,542 INFO: Preparing source data...
+2026-02-13 14:12:18,676 INFO: Applied 36 column mappings
+2026-02-13 14:12:19,075 INFO: Applied 7 column transformations
+2026-02-13 14:12:19,217 INFO: Created 2 inferred columns
+2026-02-13 14:12:19,727 INFO: Validated 7 date columns
+2026-02-13 14:12:19,903 INFO: Source data preparation complete
+2026-02-13 14:12:19,724 INFO: Loading summary metadata from primary_catalog.main_all_scenarios.latest_summary
+2026-02-13 14:12:19,788 INFO: Loaded metadata for existing accounts
+2026-02-13 14:12:19,788 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:12:27,324 INFO: ------------------------------------------------------------
+2026-02-13 14:12:27,324 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:12:27,324 INFO:   CASE_I: 2 records
+2026-02-13 14:12:27,324 INFO:   CASE_IV: 1 records
+2026-02-13 14:12:27,325 INFO:   CASE_III: 1 records
+2026-02-13 14:12:27,325 INFO:   CASE_II: 1 records
+2026-02-13 14:12:27,325 INFO: ------------------------------------------------------------
+2026-02-13 14:12:27,325 INFO: Classification | Time Elapsed: 0.19 minutes
+2026-02-13 14:12:27,355 INFO: 
+>>> PROCESSING BACKFILL (1 records)
+2026-02-13 14:12:27,355 INFO: ================================================================================
+2026-02-13 14:12:27,355 INFO: STEP 2c: Process Case III (Backfill)
+2026-02-13 14:12:27,355 INFO: ================================================================================
+2026-02-13 14:12:27,355 INFO: CASE III - Processing backfill records
+2026-02-13 14:12:29,905 INFO: Backfill month range: 2025-12 to 2025-12
+2026-02-13 14:12:29,906 INFO: Reading summary partitions from 2022-12 to 2028-12
+2026-02-13 14:12:35,961 INFO: Applied partition filter: rpt_as_of_mo BETWEEN '2022-12' AND '2028-12'
+2026-02-13 14:12:30,005 INFO: Part A: Creating new summary rows for backfill months...
+2026-02-13 14:12:31,173 INFO: Write partitions [case_3a_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:12:43,862 INFO: Case III Part A Generated | Time Elapsed: 0.28 minutes
+2026-02-13 14:12:43,862 INFO: ------------------------------------------------------------
+2026-02-13 14:12:43,862 INFO: Part B: Updating future summary rows...
+2026-02-13 14:12:46,922 INFO: Write partitions [case_3b_temp]: 200 (base=200, expected_rows=None, scale=1.0)
+2026-02-13 14:12:52,899 INFO: Case III Part B Generated | Time Elapsed: 0.15 minutes
+2026-02-13 14:12:52,899 INFO: ------------------------------------------------------------
+2026-02-13 14:12:52,920 INFO: 
+>>> PROCESSING NEW ACCOUNTS (2 records)
+2026-02-13 14:12:52,920 INFO: ================================================================================
+2026-02-13 14:12:52,920 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:12:52,921 INFO: ================================================================================
+2026-02-13 14:12:52,921 INFO: Processing new accounts
+2026-02-13 14:12:53,423 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=2, scale=1.0)
+2026-02-13 14:12:56,414 INFO: Case I Generated | Time Elapsed: 0.06 minutes
+2026-02-13 14:12:56,414 INFO: ------------------------------------------------------------
+2026-02-13 14:12:56,449 INFO: 
+>>> PROCESSING BULK HISTORICAL (1 records)
+2026-02-13 14:12:56,450 INFO: ================================================================================
+2026-02-13 14:12:56,450 INFO: STEP 2d: Process Case IV (Bulk Historical Load)
+2026-02-13 14:12:56,450 INFO: ================================================================================
+2026-02-13 14:12:56,450 INFO: Processing bulk historical records
+2026-02-13 14:12:56,488 INFO: Building complete history using window functions
+2026-02-13 14:12:59,435 INFO: Write partitions [case_4_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:13:11,365 INFO: Case IV Generated | Time Elapsed: 0.25 minutes
+2026-02-13 14:13:11,365 INFO: ------------------------------------------------------------
+2026-02-13 14:13:11,417 INFO: ------------------------------------------------------------
+2026-02-13 14:13:11,417 INFO: MERGING RECORDS:
+2026-02-13 14:13:13,206 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.03 minutes
+2026-02-13 14:13:13,206 INFO: ------------------------------------------------------------
+2026-02-13 14:13:14,684 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.02 minutes
+2026-02-13 14:13:14,684 INFO: ------------------------------------------------------------
+2026-02-13 14:13:14,684 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:13:14,782 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=3, scale=1.0)
+2026-02-13 14:13:17,485 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.05 minutes
+2026-02-13 14:13:17,485 INFO: ------------------------------------------------------------
+2026-02-13 14:13:17,485 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:13:19,866 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.05 minutes
+2026-02-13 14:13:19,867 INFO: ------------------------------------------------------------
+2026-02-13 14:13:19,868 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:13:22,147 INFO: Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: 0.04 minutes
+2026-02-13 14:13:22,147 INFO: ------------------------------------------------------------
+2026-02-13 14:13:22,167 INFO: 
+>>> PROCESSING FORWARD ENTRIES (1 records)
+2026-02-13 14:13:22,167 INFO: ================================================================================
+2026-02-13 14:13:22,167 INFO: STEP 2b: Process Case II (Forward Entries)
+2026-02-13 14:13:22,168 INFO: ================================================================================
+2026-02-13 14:13:22,168 INFO: Processing forward entries
+2026-02-13 14:13:22,194 INFO: Loading latest summary for Affected Accounts
+2026-02-13 14:13:22,515 INFO: Write partitions [case_2_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:13:30,971 INFO: Case II Generated | Time Elapsed: 0.15 minutes
+2026-02-13 14:13:30,972 INFO: ------------------------------------------------------------
+2026-02-13 14:13:30,972 INFO: ------------------------------------------------------------
+2026-02-13 14:13:30,972 INFO: MERGING FORWARD RECORDS:
+2026-02-13 14:13:31,026 INFO: Write partitions [summary_merge_case_2]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:13:32,930 INFO: Updated Summary | MERGED - CASE II (Forward Records) | Time Elapsed: 0.03 minutes
+2026-02-13 14:13:32,930 INFO: ------------------------------------------------------------
+2026-02-13 14:13:34,698 INFO: Updated latest_summary | MERGE - CASE II (Forward Records) | Time Elapsed: 0.03 minutes
+2026-02-13 14:13:34,699 INFO: ------------------------------------------------------------
+2026-02-13 14:13:34,699 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:13:36,301 INFO: Refreshed watermark tracker table: primary_catalog.main_all_scenarios.summary_watermark_tracker (mark_committed=True)
+[PASS] all_scenarios
+2026-02-13 14:13:38,186 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_all_scenarios_v942.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:13:43 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:13:44 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:14:00,863 INFO: Cleaned case_1
+2026-02-13 14:14:00,889 INFO: Cleaned case_2
+2026-02-13 14:14:00,914 INFO: Cleaned case_3a
+2026-02-13 14:14:00,939 INFO: Cleaned case_3b
+2026-02-13 14:14:00,967 INFO: Cleaned case_4
+2026-02-13 14:14:00,967 INFO: CLEANUP COMPLETED
+2026-02-13 14:14:00,967 INFO: ============================================================
+2026-02-13 14:14:00,967 INFO: ================================================================================
+2026-02-13 14:14:00,967 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:14:00,967 INFO: ================================================================================
+2026-02-13 14:14:00,967 INFO: ================================================================================
+2026-02-13 14:14:00,967 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:14:00,968 INFO: ================================================================================
+2026-02-13 14:14:03,548 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2025-12-01 00:00:00
+2026-02-13 14:14:03,548 INFO: Loading accounts from primary_catalog.main_all_scenarios.accounts_all
+2026-02-13 14:14:03,685 INFO: Reading from primary_catalog.main_all_scenarios.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2025-12-01 00:00:00
+2026-02-13 14:14:03,685 INFO: Preparing source data...
+2026-02-13 14:14:03,860 INFO: Applied 36 column mappings
+2026-02-13 14:14:04,193 INFO: Applied 7 column transformations
+2026-02-13 14:14:04,291 INFO: Created 2 inferred columns
+2026-02-13 14:14:11,143 INFO: Validated 7 date columns
+2026-02-13 14:14:04,818 INFO: Source data preparation complete
+2026-02-13 14:14:05,014 INFO: Loading summary metadata from primary_catalog.main_all_scenarios.latest_summary
+2026-02-13 14:14:05,057 INFO: Loaded metadata for existing accounts
+2026-02-13 14:14:05,057 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:14:13,175 INFO: ------------------------------------------------------------
+2026-02-13 14:14:13,175 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:14:13,176 INFO:   CASE_I: 2 records
+2026-02-13 14:14:13,176 INFO:   CASE_IV: 1 records
+2026-02-13 14:14:13,176 INFO:   CASE_III: 1 records
+2026-02-13 14:14:13,177 INFO:   CASE_II: 1 records
+2026-02-13 14:14:13,177 INFO: ------------------------------------------------------------
+2026-02-13 14:14:13,177 INFO: Classification | Time Elapsed: 0.20 minutes
+2026-02-13 14:14:13,206 INFO: 
+>>> PROCESSING BACKFILL (1 records)
+2026-02-13 14:14:13,207 INFO: ================================================================================
+2026-02-13 14:14:13,207 INFO: STEP 2c: Process Case III (Backfill)
+2026-02-13 14:14:13,208 INFO: ================================================================================
+2026-02-13 14:14:13,208 INFO: CASE III - Processing backfill records
+2026-02-13 14:14:14,848 INFO: Backfill month range: 2025-12 to 2025-12
+2026-02-13 14:14:14,848 INFO: Reading summary partitions from 2022-12 to 2028-12
+2026-02-13 14:14:14,876 INFO: Applied partition filter: rpt_as_of_mo BETWEEN '2022-12' AND '2028-12'
+2026-02-13 14:14:15,196 INFO: Part A: Creating new summary rows for backfill months...
+2026-02-13 14:14:16,393 INFO: Write partitions [case_3a_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:14:29,668 INFO: Case III Part A Generated | Time Elapsed: 0.27 minutes
+2026-02-13 14:14:29,669 INFO: ------------------------------------------------------------
+2026-02-13 14:14:29,669 INFO: Part B: Updating future summary rows...
+2026-02-13 14:14:32,897 INFO: Write partitions [case_3b_temp]: 200 (base=200, expected_rows=None, scale=1.0)
+2026-02-13 14:14:39,776 INFO: Case III Part B Generated | Time Elapsed: 0.17 minutes
+2026-02-13 14:14:39,777 INFO: ------------------------------------------------------------
+2026-02-13 14:14:39,826 INFO: 
+>>> PROCESSING NEW ACCOUNTS (2 records)
+2026-02-13 14:14:39,826 INFO: ================================================================================
+2026-02-13 14:14:39,826 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:14:39,826 INFO: ================================================================================
+2026-02-13 14:14:39,826 INFO: Processing new accounts
+2026-02-13 14:14:40,119 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=2, scale=1.0)
+2026-02-13 14:14:44,467 INFO: Case I Generated | Time Elapsed: 0.08 minutes
+2026-02-13 14:14:44,467 INFO: ------------------------------------------------------------
+2026-02-13 14:14:44,496 INFO: 
+>>> PROCESSING BULK HISTORICAL (1 records)
+2026-02-13 14:14:44,496 INFO: ================================================================================
+2026-02-13 14:14:44,496 INFO: STEP 2d: Process Case IV (Bulk Historical Load)
+2026-02-13 14:14:44,496 INFO: ================================================================================
+2026-02-13 14:14:44,497 INFO: Processing bulk historical records
+2026-02-13 14:14:44,530 INFO: Building complete history using window functions
+2026-02-13 14:14:47,988 INFO: Write partitions [case_4_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:15:02,045 INFO: Case IV Generated | Time Elapsed: 0.29 minutes
+2026-02-13 14:15:02,046 INFO: ------------------------------------------------------------
+2026-02-13 14:15:02,069 INFO: ------------------------------------------------------------
+2026-02-13 14:15:02,070 INFO: MERGING RECORDS:
+2026-02-13 14:15:03,896 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.03 minutes
+2026-02-13 14:15:03,896 INFO: ------------------------------------------------------------
+2026-02-13 14:15:04,963 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.02 minutes
+2026-02-13 14:15:04,963 INFO: ------------------------------------------------------------
+2026-02-13 14:15:04,963 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:15:05,052 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=3, scale=1.0)
+2026-02-13 14:15:08,962 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.07 minutes
+2026-02-13 14:15:08,962 INFO: ------------------------------------------------------------
+2026-02-13 14:15:08,962 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:15:10,895 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.07 minutes
+2026-02-13 14:15:10,895 INFO: ------------------------------------------------------------
+2026-02-13 14:15:10,895 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:15:13,460 INFO: Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: 0.04 minutes
+2026-02-13 14:15:13,461 INFO: ------------------------------------------------------------
+2026-02-13 14:15:13,478 INFO: 
+>>> PROCESSING FORWARD ENTRIES (1 records)
+2026-02-13 14:15:13,479 INFO: ================================================================================
+2026-02-13 14:15:13,479 INFO: STEP 2b: Process Case II (Forward Entries)
+2026-02-13 14:15:13,479 INFO: ================================================================================
+2026-02-13 14:15:13,479 INFO: Processing forward entries
+2026-02-13 14:15:13,509 INFO: Loading latest summary for Affected Accounts
+2026-02-13 14:15:13,834 INFO: Write partitions [case_2_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:15:24,138 INFO: Case II Generated | Time Elapsed: 0.18 minutes
+2026-02-13 14:15:24,138 INFO: ------------------------------------------------------------
+2026-02-13 14:15:24,138 INFO: ------------------------------------------------------------
+2026-02-13 14:15:24,138 INFO: MERGING FORWARD RECORDS:
+2026-02-13 14:15:24,196 INFO: Write partitions [summary_merge_case_2]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:15:25,688 INFO: Updated Summary | MERGED - CASE II (Forward Records) | Time Elapsed: 0.03 minutes
+2026-02-13 14:15:25,688 INFO: ------------------------------------------------------------
+2026-02-13 14:15:27,841 INFO: Updated latest_summary | MERGE - CASE II (Forward Records) | Time Elapsed: 0.04 minutes
+2026-02-13 14:15:27,841 INFO: ------------------------------------------------------------
+2026-02-13 14:15:27,841 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:15:30,147 INFO: Refreshed watermark tracker table: primary_catalog.main_all_scenarios.summary_watermark_tracker (mark_committed=True)
+[PASS] all_scenarios
+2026-02-13 14:15:31,493 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_bulk_historical_load.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:15:36 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:15:37 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:15:53,552 INFO: Cleaned case_1
+2026-02-13 14:15:53,577 INFO: Cleaned case_2
+2026-02-13 14:15:53,599 INFO: Cleaned case_3a
+2026-02-13 14:15:53,629 INFO: Cleaned case_3b
+2026-02-13 14:15:53,658 INFO: Cleaned case_4
+2026-02-13 14:15:53,659 INFO: CLEANUP COMPLETED
+2026-02-13 14:15:53,659 INFO: ============================================================
+2026-02-13 14:15:53,659 INFO: ================================================================================
+2026-02-13 14:15:53,659 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:15:53,659 INFO: ================================================================================
+2026-02-13 14:15:53,659 INFO: ================================================================================
+2026-02-13 14:15:53,659 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:15:53,659 INFO: ================================================================================
+2026-02-13 14:15:55,496 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2020-01-02 00:00:00
+2026-02-13 14:15:55,500 INFO: Loading accounts from primary_catalog.main_bulk.accounts_all
+2026-02-13 14:15:55,682 INFO: Reading from primary_catalog.main_bulk.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2020-01-02 00:00:00
+2026-02-13 14:15:55,682 INFO: Preparing source data...
+2026-02-13 14:15:55,814 INFO: Applied 36 column mappings
+2026-02-13 14:15:56,232 INFO: Applied 7 column transformations
+2026-02-13 14:15:56,341 INFO: Created 2 inferred columns
+2026-02-13 14:15:56,983 INFO: Validated 7 date columns
+2026-02-13 14:15:57,136 INFO: Source data preparation complete
+2026-02-13 14:15:57,295 INFO: Loading summary metadata from primary_catalog.main_bulk.latest_summary
+2026-02-13 14:15:57,372 INFO: Loaded metadata for existing accounts
+2026-02-13 14:15:57,372 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:16:06,337 INFO: ------------------------------------------------------------
+2026-02-13 14:16:06,337 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:16:06,337 INFO:   CASE_I: 1 records
+2026-02-13 14:16:06,338 INFO:   CASE_IV: 47 records
+2026-02-13 14:16:06,338 INFO: ------------------------------------------------------------
+2026-02-13 14:16:06,338 INFO: Classification | Time Elapsed: 0.21 minutes
+2026-02-13 14:16:06,381 INFO: 
+>>> PROCESSING NEW ACCOUNTS (1 records)
+2026-02-13 14:16:06,382 INFO: ================================================================================
+2026-02-13 14:16:06,382 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:16:06,382 INFO: ================================================================================
+2026-02-13 14:16:06,382 INFO: Processing new accounts
+2026-02-13 14:16:07,179 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:16:12,370 INFO: Case I Generated | Time Elapsed: 0.10 minutes
+2026-02-13 14:16:12,370 INFO: ------------------------------------------------------------
+2026-02-13 14:16:12,398 INFO: 
+>>> PROCESSING BULK HISTORICAL (47 records)
+2026-02-13 14:16:12,398 INFO: ================================================================================
+2026-02-13 14:16:12,399 INFO: STEP 2d: Process Case IV (Bulk Historical Load)
+2026-02-13 14:16:12,399 INFO: ================================================================================
+2026-02-13 14:16:12,399 INFO: Processing bulk historical records
+2026-02-13 14:16:12,470 INFO: Building complete history using window functions
+2026-02-13 14:16:16,223 INFO: Write partitions [case_4_temp]: 50 (base=200, expected_rows=47, scale=1.0)
+2026-02-13 14:16:33,573 INFO: Case IV Generated | Time Elapsed: 0.35 minutes
+2026-02-13 14:16:33,573 INFO: ------------------------------------------------------------
+2026-02-13 14:16:33,591 INFO: ------------------------------------------------------------
+2026-02-13 14:16:33,591 INFO: MERGING RECORDS:
+2026-02-13 14:16:33,599 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:16:33,599 INFO: ------------------------------------------------------------
+2026-02-13 14:16:33,608 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:16:33,608 INFO: ------------------------------------------------------------
+2026-02-13 14:16:33,609 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:16:33,745 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=48, scale=1.0)
+2026-02-13 14:16:39,885 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.10 minutes
+2026-02-13 14:16:39,885 INFO: ------------------------------------------------------------
+2026-02-13 14:16:39,886 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:16:43,690 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.10 minutes
+2026-02-13 14:16:43,690 INFO: ------------------------------------------------------------
+2026-02-13 14:16:43,690 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:16:43,724 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:16:43,725 INFO: ------------------------------------------------------------
+2026-02-13 14:16:43,756 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:16:45,803 INFO: Refreshed watermark tracker table: primary_catalog.main_bulk.summary_watermark_tracker (mark_committed=True)
+[PASS] bulk_historical_load
+2026-02-13 14:16:47,670 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_complex_scenarios.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:16:52 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:16:53 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:17:09,521 INFO: Cleaned case_1
+2026-02-13 14:17:09,538 INFO: Cleaned case_2
+2026-02-13 14:17:09,556 INFO: Cleaned case_3a
+2026-02-13 14:17:09,579 INFO: Cleaned case_3b
+2026-02-13 14:17:09,597 INFO: Cleaned case_4
+2026-02-13 14:17:09,597 INFO: CLEANUP COMPLETED
+2026-02-13 14:17:09,598 INFO: ============================================================
+2026-02-13 14:17:09,598 INFO: ================================================================================
+2026-02-13 14:17:09,598 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:17:09,598 INFO: ================================================================================
+2026-02-13 14:17:09,598 INFO: ================================================================================
+2026-02-13 14:17:09,598 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:17:09,598 INFO: ================================================================================
+2026-02-13 14:17:11,917 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2025-12-01 00:00:00
+2026-02-13 14:17:11,917 INFO: Loading accounts from primary_catalog.main_all_scenarios.accounts_all
+2026-02-13 14:17:12,082 INFO: Reading from primary_catalog.main_all_scenarios.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2025-12-01 00:00:00
+2026-02-13 14:17:12,082 INFO: Preparing source data...
+2026-02-13 14:17:12,299 INFO: Applied 36 column mappings
+2026-02-13 14:17:12,858 INFO: Applied 7 column transformations
+2026-02-13 14:17:13,028 INFO: Created 2 inferred columns
+2026-02-13 14:17:13,749 INFO: Validated 7 date columns
+2026-02-13 14:17:13,870 INFO: Source data preparation complete
+2026-02-13 14:17:14,037 INFO: Loading summary metadata from primary_catalog.main_all_scenarios.latest_summary
+2026-02-13 14:17:14,084 INFO: Loaded metadata for existing accounts
+2026-02-13 14:17:14,084 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:17:22,077 INFO: ------------------------------------------------------------
+2026-02-13 14:17:22,077 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:17:22,078 INFO:   CASE_I: 2 records
+2026-02-13 14:17:22,083 INFO:   CASE_IV: 1 records
+2026-02-13 14:17:22,084 INFO:   CASE_III: 1 records
+2026-02-13 14:17:22,085 INFO:   CASE_II: 1 records
+2026-02-13 14:17:22,086 INFO: ------------------------------------------------------------
+2026-02-13 14:17:22,087 INFO: Classification | Time Elapsed: 0.21 minutes
+2026-02-13 14:17:22,142 INFO: 
+>>> PROCESSING BACKFILL (1 records)
+2026-02-13 14:17:22,143 INFO: ================================================================================
+2026-02-13 14:17:22,143 INFO: STEP 2c: Process Case III (Backfill)
+2026-02-13 14:17:22,143 INFO: ================================================================================
+2026-02-13 14:17:22,143 INFO: CASE III - Processing backfill records
+2026-02-13 14:17:24,501 INFO: Backfill month range: 2025-12 to 2025-12
+2026-02-13 14:17:24,502 INFO: Reading summary partitions from 2022-12 to 2028-12
+2026-02-13 14:17:24,538 INFO: Applied partition filter: rpt_as_of_mo BETWEEN '2022-12' AND '2028-12'
+2026-02-13 14:17:24,890 INFO: Part A: Creating new summary rows for backfill months...
+2026-02-13 14:17:25,577 INFO: Write partitions [case_3a_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:17:38,850 INFO: Case III Part A Generated | Time Elapsed: 0.28 minutes
+2026-02-13 14:17:38,851 INFO: ------------------------------------------------------------
+2026-02-13 14:17:38,851 INFO: Part B: Updating future summary rows...
+2026-02-13 14:17:42,552 INFO: Write partitions [case_3b_temp]: 200 (base=200, expected_rows=None, scale=1.0)
+2026-02-13 14:17:48,598 INFO: Case III Part B Generated | Time Elapsed: 0.16 minutes
+2026-02-13 14:17:48,598 INFO: ------------------------------------------------------------
+2026-02-13 14:17:48,613 INFO: 
+>>> PROCESSING NEW ACCOUNTS (2 records)
+2026-02-13 14:17:48,613 INFO: ================================================================================
+2026-02-13 14:17:48,613 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:17:48,613 INFO: ================================================================================
+2026-02-13 14:17:48,614 INFO: Processing new accounts
+2026-02-13 14:17:49,145 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=2, scale=1.0)
+2026-02-13 14:17:52,735 INFO: Case I Generated | Time Elapsed: 0.07 minutes
+2026-02-13 14:17:52,735 INFO: ------------------------------------------------------------
+2026-02-13 14:17:52,749 INFO: 
+>>> PROCESSING BULK HISTORICAL (1 records)
+2026-02-13 14:17:52,750 INFO: ================================================================================
+2026-02-13 14:17:52,750 INFO: STEP 2d: Process Case IV (Bulk Historical Load)
+2026-02-13 14:17:52,750 INFO: ================================================================================
+2026-02-13 14:17:52,750 INFO: Processing bulk historical records
+2026-02-13 14:17:52,790 INFO: Building complete history using window functions
+2026-02-13 14:17:55,607 INFO: Write partitions [case_4_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:18:09,474 INFO: Case IV Generated | Time Elapsed: 0.28 minutes
+2026-02-13 14:18:09,474 INFO: ------------------------------------------------------------
+2026-02-13 14:18:09,494 INFO: ------------------------------------------------------------
+2026-02-13 14:18:09,494 INFO: MERGING RECORDS:
+2026-02-13 14:18:10,732 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.02 minutes
+2026-02-13 14:18:10,733 INFO: ------------------------------------------------------------
+2026-02-13 14:18:12,361 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.03 minutes
+2026-02-13 14:18:12,361 INFO: ------------------------------------------------------------
+2026-02-13 14:18:12,361 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:18:12,443 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=3, scale=1.0)
+2026-02-13 14:18:15,386 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.05 minutes
+2026-02-13 14:18:15,386 INFO: ------------------------------------------------------------
+2026-02-13 14:18:15,386 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:18:17,315 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.05 minutes
+2026-02-13 14:18:17,315 INFO: ------------------------------------------------------------
+2026-02-13 14:18:17,316 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:18:26,577 INFO: Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: 0.15 minutes
+2026-02-13 14:18:26,577 INFO: ------------------------------------------------------------
+2026-02-13 14:18:26,611 INFO: 
+>>> PROCESSING FORWARD ENTRIES (1 records)
+2026-02-13 14:18:26,611 INFO: ================================================================================
+2026-02-13 14:18:26,612 INFO: STEP 2b: Process Case II (Forward Entries)
+2026-02-13 14:18:26,612 INFO: ================================================================================
+2026-02-13 14:18:26,612 INFO: Processing forward entries
+2026-02-13 14:18:26,652 INFO: Loading latest summary for Affected Accounts
+2026-02-13 14:18:20,502 INFO: Write partitions [case_2_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:18:31,618 INFO: Case II Generated | Time Elapsed: 0.08 minutes
+2026-02-13 14:18:31,619 INFO: ------------------------------------------------------------
+2026-02-13 14:18:31,619 INFO: ------------------------------------------------------------
+2026-02-13 14:18:31,619 INFO: MERGING FORWARD RECORDS:
+2026-02-13 14:18:31,671 INFO: Write partitions [summary_merge_case_2]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:18:33,567 INFO: Updated Summary | MERGED - CASE II (Forward Records) | Time Elapsed: 0.03 minutes
+2026-02-13 14:18:33,567 INFO: ------------------------------------------------------------
+2026-02-13 14:18:35,295 INFO: Updated latest_summary | MERGE - CASE II (Forward Records) | Time Elapsed: 0.03 minutes
+2026-02-13 14:18:35,295 INFO: ------------------------------------------------------------
+2026-02-13 14:18:35,295 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:18:36,758 INFO: Refreshed watermark tracker table: primary_catalog.main_all_scenarios.summary_watermark_tracker (mark_committed=True)
+[PASS] all_scenarios
+2026-02-13 14:18:38,647 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_comprehensive_50_cases.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:18:43 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:18:44 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:19:06,650 INFO: Cleaned case_1
+2026-02-13 14:19:06,681 INFO: Cleaned case_2
+2026-02-13 14:19:06,717 INFO: Cleaned case_3a
+2026-02-13 14:19:06,747 INFO: Cleaned case_3b
+2026-02-13 14:19:06,775 INFO: Cleaned case_4
+2026-02-13 14:19:06,775 INFO: CLEANUP COMPLETED
+2026-02-13 14:19:06,775 INFO: ============================================================
+2026-02-13 14:19:06,776 INFO: ================================================================================
+2026-02-13 14:19:06,776 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:19:06,776 INFO: ================================================================================
+2026-02-13 14:19:06,776 INFO: ================================================================================
+2026-02-13 14:19:06,777 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:19:06,777 INFO: ================================================================================
+2026-02-13 14:19:02,855 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2025-12-01 00:00:00
+2026-02-13 14:19:02,856 INFO: Loading accounts from primary_catalog.main_50_cases.accounts_all
+2026-02-13 14:19:02,984 INFO: Reading from primary_catalog.main_50_cases.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2025-12-01 00:00:00
+2026-02-13 14:19:02,984 INFO: Preparing source data...
+2026-02-13 14:19:03,143 INFO: Applied 36 column mappings
+2026-02-13 14:19:03,543 INFO: Applied 7 column transformations
+2026-02-13 14:19:03,703 INFO: Created 2 inferred columns
+2026-02-13 14:19:04,272 INFO: Validated 7 date columns
+2026-02-13 14:19:04,382 INFO: Source data preparation complete
+2026-02-13 14:19:04,552 INFO: Loading summary metadata from primary_catalog.main_50_cases.latest_summary
+2026-02-13 14:19:04,600 INFO: Loaded metadata for existing accounts
+2026-02-13 14:19:04,601 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:19:13,046 INFO: ------------------------------------------------------------
+2026-02-13 14:19:13,046 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:19:13,046 INFO:   CASE_I: 30 records
+2026-02-13 14:19:13,046 INFO:   CASE_IV: 10 records
+2026-02-13 14:19:13,046 INFO:   CASE_II: 10 records
+2026-02-13 14:19:13,046 INFO: ------------------------------------------------------------
+2026-02-13 14:19:13,047 INFO: Classification | Time Elapsed: 0.10 minutes
+2026-02-13 14:19:13,115 INFO: 
+>>> PROCESSING NEW ACCOUNTS (30 records)
+2026-02-13 14:19:13,115 INFO: ================================================================================
+2026-02-13 14:19:13,115 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:19:13,115 INFO: ================================================================================
+2026-02-13 14:19:13,115 INFO: Processing new accounts
+2026-02-13 14:19:13,953 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=30, scale=1.0)
+2026-02-13 14:19:19,381 INFO: Case I Generated | Time Elapsed: 0.10 minutes
+2026-02-13 14:19:19,382 INFO: ------------------------------------------------------------
+2026-02-13 14:19:19,417 INFO: 
+>>> PROCESSING BULK HISTORICAL (10 records)
+2026-02-13 14:19:19,418 INFO: ================================================================================
+2026-02-13 14:19:19,418 INFO: STEP 2d: Process Case IV (Bulk Historical Load)
+2026-02-13 14:19:19,418 INFO: ================================================================================
+2026-02-13 14:19:19,418 INFO: Processing bulk historical records
+2026-02-13 14:19:19,521 INFO: Building complete history using window functions
+2026-02-13 14:19:24,024 INFO: Write partitions [case_4_temp]: 50 (base=200, expected_rows=10, scale=1.0)
+2026-02-13 14:19:37,411 INFO: Case IV Generated | Time Elapsed: 0.30 minutes
+2026-02-13 14:19:37,411 INFO: ------------------------------------------------------------
+2026-02-13 14:19:37,428 INFO: ------------------------------------------------------------
+2026-02-13 14:19:37,428 INFO: MERGING RECORDS:
+2026-02-13 14:19:37,437 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:19:37,438 INFO: ------------------------------------------------------------
+2026-02-13 14:19:37,445 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:19:37,445 INFO: ------------------------------------------------------------
+2026-02-13 14:19:37,445 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:19:37,567 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=40, scale=1.0)
+2026-02-13 14:19:41,684 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.07 minutes
+2026-02-13 14:19:41,684 INFO: ------------------------------------------------------------
+2026-02-13 14:19:41,685 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:19:45,175 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.07 minutes
+2026-02-13 14:19:45,176 INFO: ------------------------------------------------------------
+2026-02-13 14:19:45,176 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:19:45,195 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:19:45,196 INFO: ------------------------------------------------------------
+2026-02-13 14:19:45,225 INFO: 
+>>> PROCESSING FORWARD ENTRIES (10 records)
+2026-02-13 14:19:45,225 INFO: ================================================================================
+2026-02-13 14:19:45,225 INFO: STEP 2b: Process Case II (Forward Entries)
+2026-02-13 14:19:45,225 INFO: ================================================================================
+2026-02-13 14:19:45,226 INFO: Processing forward entries
+2026-02-13 14:19:45,266 INFO: Loading latest summary for Affected Accounts
+2026-02-13 14:19:45,410 INFO: Write partitions [case_2_temp]: 50 (base=200, expected_rows=10, scale=1.0)
+2026-02-13 14:19:58,583 INFO: Case II Generated | Time Elapsed: 0.22 minutes
+2026-02-13 14:19:58,583 INFO: ------------------------------------------------------------
+2026-02-13 14:19:58,584 INFO: ------------------------------------------------------------
+2026-02-13 14:19:58,584 INFO: MERGING FORWARD RECORDS:
+2026-02-13 14:19:58,661 INFO: Write partitions [summary_merge_case_2]: 50 (base=200, expected_rows=10, scale=1.0)
+2026-02-13 14:20:00,905 INFO: Updated Summary | MERGED - CASE II (Forward Records) | Time Elapsed: 0.04 minutes
+2026-02-13 14:20:00,905 INFO: ------------------------------------------------------------
+2026-02-13 14:20:03,736 INFO: Updated latest_summary | MERGE - CASE II (Forward Records) | Time Elapsed: 0.05 minutes
+2026-02-13 14:20:03,736 INFO: ------------------------------------------------------------
+2026-02-13 14:20:03,736 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:20:05,477 INFO: Refreshed watermark tracker table: primary_catalog.main_50_cases.summary_watermark_tracker (mark_committed=True)
+[PASS] comprehensive_50_cases
+2026-02-13 14:20:07,287 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_comprehensive_edge_cases.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:20:12 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:20:13 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:20:29,331 INFO: Cleaned case_1
+2026-02-13 14:20:29,348 INFO: Cleaned case_2
+2026-02-13 14:20:29,368 INFO: Cleaned case_3a
+2026-02-13 14:20:29,395 INFO: Cleaned case_3b
+2026-02-13 14:20:29,428 INFO: Cleaned case_4
+2026-02-13 14:20:29,428 INFO: CLEANUP COMPLETED
+2026-02-13 14:20:29,428 INFO: ============================================================
+2026-02-13 14:20:29,428 INFO: ================================================================================
+2026-02-13 14:20:29,428 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:20:29,428 INFO: ================================================================================
+2026-02-13 14:20:29,429 INFO: ================================================================================
+2026-02-13 14:20:29,429 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:20:29,429 INFO: ================================================================================
+2026-02-13 14:20:31,680 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2025-12-01 00:00:00
+2026-02-13 14:20:31,681 INFO: Loading accounts from primary_catalog.main_edge_null.accounts_all
+2026-02-13 14:20:31,876 INFO: Reading from primary_catalog.main_edge_null.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2025-12-01 00:00:00
+2026-02-13 14:20:31,876 INFO: Preparing source data...
+2026-02-13 14:20:32,041 INFO: Applied 36 column mappings
+2026-02-13 14:20:32,392 INFO: Applied 7 column transformations
+2026-02-13 14:20:32,487 INFO: Created 2 inferred columns
+2026-02-13 14:20:33,198 INFO: Validated 7 date columns
+2026-02-13 14:20:33,340 INFO: Source data preparation complete
+2026-02-13 14:20:33,478 INFO: Loading summary metadata from primary_catalog.main_edge_null.latest_summary
+2026-02-13 14:20:33,525 INFO: Loaded metadata for existing accounts
+2026-02-13 14:20:33,525 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:20:41,275 INFO: ------------------------------------------------------------
+2026-02-13 14:20:41,276 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:20:41,276 INFO:   CASE_II: 1 records
+2026-02-13 14:20:41,277 INFO:   CASE_I: 1 records
+2026-02-13 14:20:41,277 INFO: ------------------------------------------------------------
+2026-02-13 14:20:41,278 INFO: Classification | Time Elapsed: 0.20 minutes
+2026-02-13 14:20:41,325 INFO: 
+>>> PROCESSING NEW ACCOUNTS (1 records)
+2026-02-13 14:20:41,325 INFO: ================================================================================
+2026-02-13 14:20:41,326 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:20:41,326 INFO: ================================================================================
+2026-02-13 14:20:41,326 INFO: Processing new accounts
+2026-02-13 14:20:42,034 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:20:46,554 INFO: Case I Generated | Time Elapsed: 0.09 minutes
+2026-02-13 14:20:46,554 INFO: ------------------------------------------------------------
+2026-02-13 14:20:46,577 INFO: ------------------------------------------------------------
+2026-02-13 14:20:46,577 INFO: MERGING RECORDS:
+2026-02-13 14:20:46,587 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:20:46,587 INFO: ------------------------------------------------------------
+2026-02-13 14:20:46,597 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:20:46,597 INFO: ------------------------------------------------------------
+2026-02-13 14:20:46,597 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:20:46,710 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:20:56,858 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.17 minutes
+2026-02-13 14:20:56,859 INFO: ------------------------------------------------------------
+2026-02-13 14:20:56,859 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:20:53,529 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.17 minutes
+2026-02-13 14:20:53,529 INFO: ------------------------------------------------------------
+2026-02-13 14:20:53,529 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:20:53,548 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:20:53,548 INFO: ------------------------------------------------------------
+2026-02-13 14:20:53,593 INFO: 
+>>> PROCESSING FORWARD ENTRIES (1 records)
+2026-02-13 14:20:53,593 INFO: ================================================================================
+2026-02-13 14:20:53,593 INFO: STEP 2b: Process Case II (Forward Entries)
+2026-02-13 14:20:53,593 INFO: ================================================================================
+2026-02-13 14:20:53,594 INFO: Processing forward entries
+2026-02-13 14:20:53,673 INFO: Loading latest summary for Affected Accounts
+2026-02-13 14:20:54,331 INFO: Write partitions [case_2_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:21:06,186 INFO: Case II Generated | Time Elapsed: 0.21 minutes
+2026-02-13 14:21:06,186 INFO: ------------------------------------------------------------
+2026-02-13 14:21:06,187 INFO: ------------------------------------------------------------
+2026-02-13 14:21:06,187 INFO: MERGING FORWARD RECORDS:
+2026-02-13 14:21:06,285 INFO: Write partitions [summary_merge_case_2]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:21:08,863 INFO: Updated Summary | MERGED - CASE II (Forward Records) | Time Elapsed: 0.04 minutes
+2026-02-13 14:21:08,863 INFO: ------------------------------------------------------------
+2026-02-13 14:21:11,512 INFO: Updated latest_summary | MERGE - CASE II (Forward Records) | Time Elapsed: 0.04 minutes
+2026-02-13 14:21:11,512 INFO: ------------------------------------------------------------
+2026-02-13 14:21:11,512 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:21:13,892 INFO: Refreshed watermark tracker table: primary_catalog.main_edge_null.summary_watermark_tracker (mark_committed=True)
+[PASS] null_update
+2026-02-13 14:21:19,030 INFO: Cleaned case_1
+2026-02-13 14:21:19,039 INFO: Cleaned case_2
+2026-02-13 14:21:19,051 INFO: Cleaned case_3a
+2026-02-13 14:21:19,062 INFO: Cleaned case_3b
+2026-02-13 14:21:19,076 INFO: Cleaned case_4
+2026-02-13 14:21:19,076 INFO: CLEANUP COMPLETED
+2026-02-13 14:21:19,076 INFO: ============================================================
+2026-02-13 14:21:19,076 INFO: ================================================================================
+2026-02-13 14:21:19,076 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:21:19,077 INFO: ================================================================================
+2026-02-13 14:21:19,077 INFO: ================================================================================
+2026-02-13 14:21:19,077 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:21:19,077 INFO: ================================================================================
+2026-02-13 14:21:19,712 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2020-01-02 00:00:00
+2026-02-13 14:21:19,713 INFO: Loading accounts from primary_catalog.main_edge_dup.accounts_all
+2026-02-13 14:21:19,743 INFO: Reading from primary_catalog.main_edge_dup.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2020-01-02 00:00:00
+2026-02-13 14:21:19,743 INFO: Preparing source data...
+2026-02-13 14:21:19,864 INFO: Applied 36 column mappings
+2026-02-13 14:21:19,956 INFO: Applied 7 column transformations
+2026-02-13 14:21:20,001 INFO: Created 2 inferred columns
+2026-02-13 14:21:20,332 INFO: Validated 7 date columns
+2026-02-13 14:21:20,441 INFO: Source data preparation complete
+2026-02-13 14:21:20,467 INFO: Loading summary metadata from primary_catalog.main_edge_dup.latest_summary
+2026-02-13 14:21:20,482 INFO: Loaded metadata for existing accounts
+2026-02-13 14:21:20,482 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:21:23,528 INFO: ------------------------------------------------------------
+2026-02-13 14:21:23,529 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:21:23,529 INFO:   CASE_I: 1 records
+2026-02-13 14:21:23,529 INFO: ------------------------------------------------------------
+2026-02-13 14:21:23,529 INFO: Classification | Time Elapsed: 0.07 minutes
+2026-02-13 14:21:23,568 INFO: 
+>>> PROCESSING NEW ACCOUNTS (1 records)
+2026-02-13 14:21:23,568 INFO: ================================================================================
+2026-02-13 14:21:23,568 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:21:23,568 INFO: ================================================================================
+2026-02-13 14:21:23,568 INFO: Processing new accounts
+2026-02-13 14:21:23,924 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:21:26,425 INFO: Case I Generated | Time Elapsed: 0.05 minutes
+2026-02-13 14:21:26,425 INFO: ------------------------------------------------------------
+2026-02-13 14:21:26,443 INFO: ------------------------------------------------------------
+2026-02-13 14:21:26,443 INFO: MERGING RECORDS:
+2026-02-13 14:21:26,449 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:21:26,449 INFO: ------------------------------------------------------------
+2026-02-13 14:21:26,455 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:21:26,455 INFO: ------------------------------------------------------------
+2026-02-13 14:21:26,455 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:21:26,514 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:21:28,872 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.04 minutes
+2026-02-13 14:21:28,872 INFO: ------------------------------------------------------------
+2026-02-13 14:21:28,872 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:21:30,442 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.04 minutes
+2026-02-13 14:21:30,442 INFO: ------------------------------------------------------------
+2026-02-13 14:21:30,442 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:21:30,451 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:21:30,451 INFO: ------------------------------------------------------------
+2026-02-13 14:21:30,471 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:21:32,372 INFO: Refreshed watermark tracker table: primary_catalog.main_edge_dup.summary_watermark_tracker (mark_committed=True)
+[PASS] duplicate_records
+2026-02-13 14:21:38,066 INFO: Cleaned case_1
+2026-02-13 14:21:38,089 INFO: Cleaned case_2
+2026-02-13 14:21:38,107 INFO: Cleaned case_3a
+2026-02-13 14:21:38,126 INFO: Cleaned case_3b
+2026-02-13 14:21:38,147 INFO: Cleaned case_4
+2026-02-13 14:21:38,147 INFO: CLEANUP COMPLETED
+2026-02-13 14:21:38,148 INFO: ============================================================
+2026-02-13 14:21:38,148 INFO: ================================================================================
+2026-02-13 14:21:38,148 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:21:38,148 INFO: ================================================================================
+2026-02-13 14:21:38,149 INFO: ================================================================================
+2026-02-13 14:21:38,150 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:21:38,150 INFO: ================================================================================
+2026-02-13 14:21:38,857 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2025-12-01 00:00:00
+2026-02-13 14:21:38,857 INFO: Loading accounts from primary_catalog.main_edge_backfill.accounts_all
+2026-02-13 14:21:38,886 INFO: Reading from primary_catalog.main_edge_backfill.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2025-12-01 00:00:00
+2026-02-13 14:21:38,886 INFO: Preparing source data...
+2026-02-13 14:21:39,041 INFO: Applied 36 column mappings
+2026-02-13 14:21:39,118 INFO: Applied 7 column transformations
+2026-02-13 14:21:39,142 INFO: Created 2 inferred columns
+2026-02-13 14:21:39,373 INFO: Validated 7 date columns
+2026-02-13 14:21:39,436 INFO: Source data preparation complete
+2026-02-13 14:21:39,454 INFO: Loading summary metadata from primary_catalog.main_edge_backfill.latest_summary
+2026-02-13 14:21:39,466 INFO: Loaded metadata for existing accounts
+2026-02-13 14:21:39,466 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:21:42,947 INFO: ------------------------------------------------------------
+2026-02-13 14:21:42,947 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:21:42,947 INFO:   CASE_III: 1 records
+2026-02-13 14:21:42,947 INFO: ------------------------------------------------------------
+2026-02-13 14:21:42,947 INFO: Classification | Time Elapsed: 0.08 minutes
+2026-02-13 14:21:42,964 INFO: 
+>>> PROCESSING BACKFILL (1 records)
+2026-02-13 14:21:42,964 INFO: ================================================================================
+2026-02-13 14:21:42,964 INFO: STEP 2c: Process Case III (Backfill)
+2026-02-13 14:21:42,964 INFO: ================================================================================
+2026-02-13 14:21:42,964 INFO: CASE III - Processing backfill records
+2026-02-13 14:21:44,422 INFO: Backfill month range: 2025-12 to 2025-12
+2026-02-13 14:21:44,422 INFO: Reading summary partitions from 2022-12 to 2028-12
+2026-02-13 14:21:44,434 INFO: Applied partition filter: rpt_as_of_mo BETWEEN '2022-12' AND '2028-12'
+2026-02-13 14:21:44,559 INFO: Part A: Creating new summary rows for backfill months...
+2026-02-13 14:21:45,151 INFO: Write partitions [case_3a_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:21:54,844 INFO: Case III Part A Generated | Time Elapsed: 0.20 minutes
+2026-02-13 14:21:54,844 INFO: ------------------------------------------------------------
+2026-02-13 14:21:54,844 INFO: Part B: Updating future summary rows...
+2026-02-13 14:21:56,446 INFO: Write partitions [case_3b_temp]: 200 (base=200, expected_rows=None, scale=1.0)
+2026-02-13 14:22:06,884 INFO: Case III Part B Generated | Time Elapsed: 0.20 minutes
+2026-02-13 14:22:06,884 INFO: ------------------------------------------------------------
+2026-02-13 14:22:06,931 INFO: ------------------------------------------------------------
+2026-02-13 14:22:06,932 INFO: MERGING RECORDS:
+2026-02-13 14:22:01,503 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: -0.09 minutes
+2026-02-13 14:22:01,503 INFO: ------------------------------------------------------------
+2026-02-13 14:22:02,715 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.02 minutes
+2026-02-13 14:22:02,715 INFO: ------------------------------------------------------------
+2026-02-13 14:22:02,715 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:22:02,727 INFO: No Case I/IV records to merge | Time Elapsed: 0.00 minutes
+2026-02-13 14:22:02,727 INFO: ------------------------------------------------------------
+2026-02-13 14:22:02,727 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:22:04,991 INFO: Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: 0.04 minutes
+2026-02-13 14:22:04,991 INFO: ------------------------------------------------------------
+2026-02-13 14:22:05,017 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:22:06,673 INFO: Refreshed watermark tracker table: primary_catalog.main_edge_backfill.summary_watermark_tracker (mark_committed=True)
+[PASS] backfill
+[PASS] comprehensive_edge_cases
+2026-02-13 14:22:07,559 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_consecutive_backfill.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:22:12 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:22:13 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:22:29,383 INFO: Cleaned case_1
+2026-02-13 14:22:29,413 INFO: Cleaned case_2
+2026-02-13 14:22:29,442 INFO: Cleaned case_3a
+2026-02-13 14:22:29,476 INFO: Cleaned case_3b
+2026-02-13 14:22:29,509 INFO: Cleaned case_4
+2026-02-13 14:22:29,509 INFO: CLEANUP COMPLETED
+2026-02-13 14:22:29,509 INFO: ============================================================
+2026-02-13 14:22:29,510 INFO: ================================================================================
+2026-02-13 14:22:29,511 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:22:29,511 INFO: ================================================================================
+2026-02-13 14:22:29,511 INFO: ================================================================================
+2026-02-13 14:22:29,511 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:22:29,511 INFO: ================================================================================
+2026-02-13 14:22:31,870 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2025-12-01 00:00:00
+2026-02-13 14:22:31,871 INFO: Loading accounts from primary_catalog.main_backfill.accounts_all
+2026-02-13 14:22:32,029 INFO: Reading from primary_catalog.main_backfill.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2025-12-01 00:00:00
+2026-02-13 14:22:32,029 INFO: Preparing source data...
+2026-02-13 14:22:32,189 INFO: Applied 36 column mappings
+2026-02-13 14:22:32,715 INFO: Applied 7 column transformations
+2026-02-13 14:22:32,875 INFO: Created 2 inferred columns
+2026-02-13 14:22:33,506 INFO: Validated 7 date columns
+2026-02-13 14:22:33,662 INFO: Source data preparation complete
+2026-02-13 14:22:33,785 INFO: Loading summary metadata from primary_catalog.main_backfill.latest_summary
+2026-02-13 14:22:33,841 INFO: Loaded metadata for existing accounts
+2026-02-13 14:22:33,841 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:22:41,548 INFO: ------------------------------------------------------------
+2026-02-13 14:22:41,549 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:22:41,549 INFO:   CASE_III: 1 records
+2026-02-13 14:22:41,550 INFO: ------------------------------------------------------------
+2026-02-13 14:22:41,550 INFO: Classification | Time Elapsed: 0.20 minutes
+2026-02-13 14:22:41,598 INFO: 
+>>> PROCESSING BACKFILL (1 records)
+2026-02-13 14:22:41,598 INFO: ================================================================================
+2026-02-13 14:22:41,598 INFO: STEP 2c: Process Case III (Backfill)
+2026-02-13 14:22:41,599 INFO: ================================================================================
+2026-02-13 14:22:41,599 INFO: CASE III - Processing backfill records
+2026-02-13 14:22:44,318 INFO: Backfill month range: 2025-12 to 2025-12
+2026-02-13 14:22:44,318 INFO: Reading summary partitions from 2022-12 to 2028-12
+2026-02-13 14:22:44,358 INFO: Applied partition filter: rpt_as_of_mo BETWEEN '2022-12' AND '2028-12'
+2026-02-13 14:22:44,865 INFO: Part A: Creating new summary rows for backfill months...
+2026-02-13 14:22:45,985 INFO: Write partitions [case_3a_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:22:59,816 INFO: Case III Part A Generated | Time Elapsed: 0.30 minutes
+2026-02-13 14:22:59,816 INFO: ------------------------------------------------------------
+2026-02-13 14:22:59,816 INFO: Part B: Updating future summary rows...
+2026-02-13 14:23:03,099 INFO: Write partitions [case_3b_temp]: 200 (base=200, expected_rows=None, scale=1.0)
+2026-02-13 14:23:07,744 INFO: Case III Part B Generated | Time Elapsed: 0.13 minutes
+2026-02-13 14:23:07,744 INFO: ------------------------------------------------------------
+2026-02-13 14:23:07,795 INFO: ------------------------------------------------------------
+2026-02-13 14:23:07,795 INFO: MERGING RECORDS:
+2026-02-13 14:23:09,933 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.04 minutes
+2026-02-13 14:23:09,933 INFO: ------------------------------------------------------------
+2026-02-13 14:23:11,294 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.02 minutes
+2026-02-13 14:23:11,294 INFO: ------------------------------------------------------------
+2026-02-13 14:23:11,294 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:23:11,310 INFO: No Case I/IV records to merge | Time Elapsed: 0.00 minutes
+2026-02-13 14:23:11,310 INFO: ------------------------------------------------------------
+2026-02-13 14:23:11,310 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:23:14,834 INFO: Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: 0.06 minutes
+2026-02-13 14:23:14,835 INFO: ------------------------------------------------------------
+2026-02-13 14:23:14,880 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:23:16,413 INFO: Refreshed watermark tracker table: primary_catalog.main_backfill.summary_watermark_tracker (mark_committed=True)
+[PASS] backfill
+2026-02-13 14:23:18,276 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_duplicate_records.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:23:22 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:23:24 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:23:37,329 INFO: Cleaned case_1
+2026-02-13 14:23:37,361 INFO: Cleaned case_2
+2026-02-13 14:23:37,389 INFO: Cleaned case_3a
+2026-02-13 14:23:37,415 INFO: Cleaned case_3b
+2026-02-13 14:23:37,438 INFO: Cleaned case_4
+2026-02-13 14:23:37,438 INFO: CLEANUP COMPLETED
+2026-02-13 14:23:37,438 INFO: ============================================================
+2026-02-13 14:23:37,438 INFO: ================================================================================
+2026-02-13 14:23:37,438 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:23:37,438 INFO: ================================================================================
+2026-02-13 14:23:37,438 INFO: ================================================================================
+2026-02-13 14:23:37,438 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:23:37,438 INFO: ================================================================================
+2026-02-13 14:23:40,112 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2020-01-02 00:00:00
+2026-02-13 14:23:40,113 INFO: Loading accounts from primary_catalog.main_duplicates.accounts_all
+2026-02-13 14:23:40,277 INFO: Reading from primary_catalog.main_duplicates.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2020-01-02 00:00:00
+2026-02-13 14:23:40,277 INFO: Preparing source data...
+2026-02-13 14:23:40,536 INFO: Applied 36 column mappings
+2026-02-13 14:23:47,234 INFO: Applied 7 column transformations
+2026-02-13 14:23:40,882 INFO: Created 2 inferred columns
+2026-02-13 14:23:41,559 INFO: Validated 7 date columns
+2026-02-13 14:23:41,720 INFO: Source data preparation complete
+2026-02-13 14:23:41,840 INFO: Loading summary metadata from primary_catalog.main_duplicates.latest_summary
+2026-02-13 14:23:41,891 INFO: Loaded metadata for existing accounts
+2026-02-13 14:23:41,891 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:23:49,729 INFO: ------------------------------------------------------------
+2026-02-13 14:23:49,729 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:23:49,729 INFO:   CASE_I: 1 records
+2026-02-13 14:23:49,729 INFO: ------------------------------------------------------------
+2026-02-13 14:23:49,729 INFO: Classification | Time Elapsed: 0.20 minutes
+2026-02-13 14:23:49,809 INFO: 
+>>> PROCESSING NEW ACCOUNTS (1 records)
+2026-02-13 14:23:49,809 INFO: ================================================================================
+2026-02-13 14:23:49,810 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:23:49,810 INFO: ================================================================================
+2026-02-13 14:23:49,810 INFO: Processing new accounts
+2026-02-13 14:23:50,653 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:23:55,109 INFO: Case I Generated | Time Elapsed: 0.09 minutes
+2026-02-13 14:23:55,109 INFO: ------------------------------------------------------------
+2026-02-13 14:23:55,127 INFO: ------------------------------------------------------------
+2026-02-13 14:23:55,127 INFO: MERGING RECORDS:
+2026-02-13 14:23:55,133 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:23:55,133 INFO: ------------------------------------------------------------
+2026-02-13 14:23:55,139 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:23:55,139 INFO: ------------------------------------------------------------
+2026-02-13 14:23:55,139 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:23:55,236 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:23:58,841 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.06 minutes
+2026-02-13 14:23:58,841 INFO: ------------------------------------------------------------
+2026-02-13 14:23:58,841 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:24:01,724 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.06 minutes
+2026-02-13 14:24:01,724 INFO: ------------------------------------------------------------
+2026-02-13 14:24:01,725 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:24:01,740 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:24:01,741 INFO: ------------------------------------------------------------
+2026-02-13 14:24:01,764 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:24:04,188 INFO: Refreshed watermark tracker table: primary_catalog.main_duplicates.summary_watermark_tracker (mark_committed=True)
+[PASS] duplicate_records
+2026-02-13 14:24:12,123 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_full_46_columns.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:24:10 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:24:11 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:24:25,071 INFO: Cleaned case_1
+2026-02-13 14:24:25,093 INFO: Cleaned case_2
+2026-02-13 14:24:25,125 INFO: Cleaned case_3a
+2026-02-13 14:24:25,156 INFO: Cleaned case_3b
+2026-02-13 14:24:25,190 INFO: Cleaned case_4
+2026-02-13 14:24:25,190 INFO: CLEANUP COMPLETED
+2026-02-13 14:24:25,190 INFO: ============================================================
+2026-02-13 14:24:25,191 INFO: ================================================================================
+2026-02-13 14:24:25,191 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:24:25,191 INFO: ================================================================================
+2026-02-13 14:24:25,191 INFO: ================================================================================
+2026-02-13 14:24:25,191 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:24:25,191 INFO: ================================================================================
+2026-02-13 14:24:27,195 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2020-01-02 00:00:00
+2026-02-13 14:24:27,196 INFO: Loading accounts from primary_catalog.main_full46.accounts_all
+2026-02-13 14:24:27,361 INFO: Reading from primary_catalog.main_full46.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2020-01-02 00:00:00
+2026-02-13 14:24:27,361 INFO: Preparing source data...
+2026-02-13 14:24:27,515 INFO: Applied 36 column mappings
+2026-02-13 14:24:27,934 INFO: Applied 7 column transformations
+2026-02-13 14:24:28,088 INFO: Created 2 inferred columns
+2026-02-13 14:24:29,004 INFO: Validated 7 date columns
+2026-02-13 14:24:29,213 INFO: Source data preparation complete
+2026-02-13 14:24:29,362 INFO: Loading summary metadata from primary_catalog.main_full46.latest_summary
+2026-02-13 14:24:29,405 INFO: Loaded metadata for existing accounts
+2026-02-13 14:24:29,405 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:24:37,336 INFO: ------------------------------------------------------------
+2026-02-13 14:24:37,337 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:24:37,337 INFO:   CASE_I: 1 records
+2026-02-13 14:24:37,337 INFO: ------------------------------------------------------------
+2026-02-13 14:24:37,337 INFO: Classification | Time Elapsed: 0.20 minutes
+2026-02-13 14:24:37,396 INFO: 
+>>> PROCESSING NEW ACCOUNTS (1 records)
+2026-02-13 14:24:37,396 INFO: ================================================================================
+2026-02-13 14:24:37,396 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:24:37,396 INFO: ================================================================================
+2026-02-13 14:24:37,397 INFO: Processing new accounts
+2026-02-13 14:24:38,120 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:24:43,204 INFO: Case I Generated | Time Elapsed: 0.10 minutes
+2026-02-13 14:24:43,205 INFO: ------------------------------------------------------------
+2026-02-13 14:24:43,227 INFO: ------------------------------------------------------------
+2026-02-13 14:24:43,227 INFO: MERGING RECORDS:
+2026-02-13 14:24:43,235 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:24:43,235 INFO: ------------------------------------------------------------
+2026-02-13 14:24:43,242 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:24:43,242 INFO: ------------------------------------------------------------
+2026-02-13 14:24:43,243 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:24:43,338 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:24:46,508 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.05 minutes
+2026-02-13 14:24:46,508 INFO: ------------------------------------------------------------
+2026-02-13 14:24:46,508 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:24:49,898 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.05 minutes
+2026-02-13 14:24:49,898 INFO: ------------------------------------------------------------
+2026-02-13 14:24:49,898 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:24:49,922 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:24:49,922 INFO: ------------------------------------------------------------
+2026-02-13 14:24:49,948 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:24:52,630 INFO: Refreshed watermark tracker table: primary_catalog.main_full46.summary_watermark_tracker (mark_committed=True)
+[PASS] full_46_columns
+2026-02-13 14:24:54,467 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_long_backfill_gaps.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:24:59 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:25:00 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:25:22,260 INFO: Cleaned case_1
+2026-02-13 14:25:22,279 INFO: Cleaned case_2
+2026-02-13 14:25:22,300 INFO: Cleaned case_3a
+2026-02-13 14:25:22,330 INFO: Cleaned case_3b
+2026-02-13 14:25:22,358 INFO: Cleaned case_4
+2026-02-13 14:25:22,358 INFO: CLEANUP COMPLETED
+2026-02-13 14:25:22,358 INFO: ============================================================
+2026-02-13 14:25:22,358 INFO: ================================================================================
+2026-02-13 14:25:22,358 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:25:22,358 INFO: ================================================================================
+2026-02-13 14:25:22,358 INFO: ================================================================================
+2026-02-13 14:25:22,358 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:25:22,358 INFO: ================================================================================
+2026-02-13 14:25:18,638 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2025-12-01 00:00:00
+2026-02-13 14:25:18,639 INFO: Loading accounts from primary_catalog.main_backfill.accounts_all
+2026-02-13 14:25:18,823 INFO: Reading from primary_catalog.main_backfill.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2025-12-01 00:00:00
+2026-02-13 14:25:18,823 INFO: Preparing source data...
+2026-02-13 14:25:18,980 INFO: Applied 36 column mappings
+2026-02-13 14:25:19,333 INFO: Applied 7 column transformations
+2026-02-13 14:25:19,447 INFO: Created 2 inferred columns
+2026-02-13 14:25:20,064 INFO: Validated 7 date columns
+2026-02-13 14:25:20,207 INFO: Source data preparation complete
+2026-02-13 14:25:20,343 INFO: Loading summary metadata from primary_catalog.main_backfill.latest_summary
+2026-02-13 14:25:20,387 INFO: Loaded metadata for existing accounts
+2026-02-13 14:25:20,387 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:25:28,102 INFO: ------------------------------------------------------------
+2026-02-13 14:25:28,102 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:25:28,102 INFO:   CASE_III: 1 records
+2026-02-13 14:25:28,102 INFO: ------------------------------------------------------------
+2026-02-13 14:25:28,102 INFO: Classification | Time Elapsed: 0.10 minutes
+2026-02-13 14:25:28,133 INFO: 
+>>> PROCESSING BACKFILL (1 records)
+2026-02-13 14:25:28,133 INFO: ================================================================================
+2026-02-13 14:25:28,134 INFO: STEP 2c: Process Case III (Backfill)
+2026-02-13 14:25:28,134 INFO: ================================================================================
+2026-02-13 14:25:28,134 INFO: CASE III - Processing backfill records
+2026-02-13 14:25:30,581 INFO: Backfill month range: 2025-12 to 2025-12
+2026-02-13 14:25:30,581 INFO: Reading summary partitions from 2022-12 to 2028-12
+2026-02-13 14:25:30,615 INFO: Applied partition filter: rpt_as_of_mo BETWEEN '2022-12' AND '2028-12'
+2026-02-13 14:25:31,070 INFO: Part A: Creating new summary rows for backfill months...
+2026-02-13 14:25:31,709 INFO: Write partitions [case_3a_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:25:45,411 INFO: Case III Part A Generated | Time Elapsed: 0.29 minutes
+2026-02-13 14:25:45,411 INFO: ------------------------------------------------------------
+2026-02-13 14:25:45,411 INFO: Part B: Updating future summary rows...
+2026-02-13 14:25:48,227 INFO: Write partitions [case_3b_temp]: 200 (base=200, expected_rows=None, scale=1.0)
+2026-02-13 14:25:53,941 INFO: Case III Part B Generated | Time Elapsed: 0.14 minutes
+2026-02-13 14:25:53,941 INFO: ------------------------------------------------------------
+2026-02-13 14:25:53,984 INFO: ------------------------------------------------------------
+2026-02-13 14:25:53,984 INFO: MERGING RECORDS:
+2026-02-13 14:25:55,910 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.03 minutes
+2026-02-13 14:25:55,910 INFO: ------------------------------------------------------------
+2026-02-13 14:25:56,984 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.02 minutes
+2026-02-13 14:25:56,985 INFO: ------------------------------------------------------------
+2026-02-13 14:25:56,985 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:25:56,998 INFO: No Case I/IV records to merge | Time Elapsed: 0.00 minutes
+2026-02-13 14:25:56,998 INFO: ------------------------------------------------------------
+2026-02-13 14:25:56,998 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:26:00,880 INFO: Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: 0.06 minutes
+2026-02-13 14:26:00,880 INFO: ------------------------------------------------------------
+2026-02-13 14:26:00,920 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:26:02,496 INFO: Refreshed watermark tracker table: primary_catalog.main_backfill.summary_watermark_tracker (mark_committed=True)
+[PASS] backfill
+2026-02-13 14:26:03,383 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_non_continuous_backfill.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:26:07 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:26:09 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:26:25,003 INFO: Cleaned case_1
+2026-02-13 14:26:25,021 INFO: Cleaned case_2
+2026-02-13 14:26:25,041 INFO: Cleaned case_3a
+2026-02-13 14:26:25,065 INFO: Cleaned case_3b
+2026-02-13 14:26:25,086 INFO: Cleaned case_4
+2026-02-13 14:26:25,087 INFO: CLEANUP COMPLETED
+2026-02-13 14:26:25,087 INFO: ============================================================
+2026-02-13 14:26:25,087 INFO: ================================================================================
+2026-02-13 14:26:25,087 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:26:25,087 INFO: ================================================================================
+2026-02-13 14:26:25,088 INFO: ================================================================================
+2026-02-13 14:26:25,088 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:26:25,088 INFO: ================================================================================
+2026-02-13 14:26:27,088 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2025-12-01 00:00:00
+2026-02-13 14:26:27,089 INFO: Loading accounts from primary_catalog.main_backfill.accounts_all
+2026-02-13 14:26:27,262 INFO: Reading from primary_catalog.main_backfill.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2025-12-01 00:00:00
+2026-02-13 14:26:27,262 INFO: Preparing source data...
+2026-02-13 14:26:27,413 INFO: Applied 36 column mappings
+2026-02-13 14:26:27,821 INFO: Applied 7 column transformations
+2026-02-13 14:26:27,965 INFO: Created 2 inferred columns
+2026-02-13 14:26:28,755 INFO: Validated 7 date columns
+2026-02-13 14:26:28,913 INFO: Source data preparation complete
+2026-02-13 14:26:29,039 INFO: Loading summary metadata from primary_catalog.main_backfill.latest_summary
+2026-02-13 14:26:29,094 INFO: Loaded metadata for existing accounts
+2026-02-13 14:26:29,094 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:26:37,518 INFO: ------------------------------------------------------------
+2026-02-13 14:26:37,518 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:26:37,518 INFO:   CASE_III: 1 records
+2026-02-13 14:26:37,518 INFO: ------------------------------------------------------------
+2026-02-13 14:26:37,518 INFO: Classification | Time Elapsed: 0.21 minutes
+2026-02-13 14:26:37,545 INFO: 
+>>> PROCESSING BACKFILL (1 records)
+2026-02-13 14:26:37,545 INFO: ================================================================================
+2026-02-13 14:26:37,545 INFO: STEP 2c: Process Case III (Backfill)
+2026-02-13 14:26:37,545 INFO: ================================================================================
+2026-02-13 14:26:37,546 INFO: CASE III - Processing backfill records
+2026-02-13 14:26:40,038 INFO: Backfill month range: 2025-12 to 2025-12
+2026-02-13 14:26:40,038 INFO: Reading summary partitions from 2022-12 to 2028-12
+2026-02-13 14:26:40,068 INFO: Applied partition filter: rpt_as_of_mo BETWEEN '2022-12' AND '2028-12'
+2026-02-13 14:26:40,382 INFO: Part A: Creating new summary rows for backfill months...
+2026-02-13 14:26:41,359 INFO: Write partitions [case_3a_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:26:55,168 INFO: Case III Part A Generated | Time Elapsed: 0.29 minutes
+2026-02-13 14:26:55,168 INFO: ------------------------------------------------------------
+2026-02-13 14:26:55,168 INFO: Part B: Updating future summary rows...
+2026-02-13 14:26:58,041 INFO: Write partitions [case_3b_temp]: 200 (base=200, expected_rows=None, scale=1.0)
+2026-02-13 14:27:03,727 INFO: Case III Part B Generated | Time Elapsed: 0.14 minutes
+2026-02-13 14:27:03,728 INFO: ------------------------------------------------------------
+2026-02-13 14:27:03,768 INFO: ------------------------------------------------------------
+2026-02-13 14:27:03,768 INFO: MERGING RECORDS:
+2026-02-13 14:27:05,271 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.03 minutes
+2026-02-13 14:27:05,272 INFO: ------------------------------------------------------------
+2026-02-13 14:27:06,905 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.03 minutes
+2026-02-13 14:27:06,905 INFO: ------------------------------------------------------------
+2026-02-13 14:27:06,905 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:27:06,918 INFO: No Case I/IV records to merge | Time Elapsed: 0.00 minutes
+2026-02-13 14:27:06,918 INFO: ------------------------------------------------------------
+2026-02-13 14:27:06,918 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:27:10,907 INFO: Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: 0.07 minutes
+2026-02-13 14:27:10,907 INFO: ------------------------------------------------------------
+2026-02-13 14:27:10,945 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:27:12,622 INFO: Refreshed watermark tracker table: primary_catalog.main_backfill.summary_watermark_tracker (mark_committed=True)
+[PASS] backfill
+2026-02-13 14:27:14,492 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_null_update_case_iii.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:27:18 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:27:20 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:27:36,146 INFO: Cleaned case_1
+2026-02-13 14:27:36,161 INFO: Cleaned case_2
+2026-02-13 14:27:36,179 INFO: Cleaned case_3a
+2026-02-13 14:27:36,203 INFO: Cleaned case_3b
+2026-02-13 14:27:36,222 INFO: Cleaned case_4
+2026-02-13 14:27:36,222 INFO: CLEANUP COMPLETED
+2026-02-13 14:27:36,222 INFO: ============================================================
+2026-02-13 14:27:36,222 INFO: ================================================================================
+2026-02-13 14:27:36,223 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:27:36,223 INFO: ================================================================================
+2026-02-13 14:27:36,223 INFO: ================================================================================
+2026-02-13 14:27:36,223 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:27:36,223 INFO: ================================================================================
+2026-02-13 14:27:39,144 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2025-12-01 00:00:00
+2026-02-13 14:27:39,145 INFO: Loading accounts from primary_catalog.main_null.accounts_all
+2026-02-13 14:27:39,300 INFO: Reading from primary_catalog.main_null.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2025-12-01 00:00:00
+2026-02-13 14:27:39,300 INFO: Preparing source data...
+2026-02-13 14:27:39,426 INFO: Applied 36 column mappings
+2026-02-13 14:27:39,809 INFO: Applied 7 column transformations
+2026-02-13 14:27:39,921 INFO: Created 2 inferred columns
+2026-02-13 14:27:40,463 INFO: Validated 7 date columns
+2026-02-13 14:27:40,742 INFO: Source data preparation complete
+2026-02-13 14:27:40,896 INFO: Loading summary metadata from primary_catalog.main_null.latest_summary
+2026-02-13 14:27:40,946 INFO: Loaded metadata for existing accounts
+2026-02-13 14:27:40,946 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:27:48,612 INFO: ------------------------------------------------------------
+2026-02-13 14:27:48,613 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:27:48,613 INFO:   CASE_II: 1 records
+2026-02-13 14:27:48,613 INFO:   CASE_I: 1 records
+2026-02-13 14:27:48,613 INFO: ------------------------------------------------------------
+2026-02-13 14:27:48,613 INFO: Classification | Time Elapsed: 0.21 minutes
+2026-02-13 14:27:48,666 INFO: 
+>>> PROCESSING NEW ACCOUNTS (1 records)
+2026-02-13 14:27:48,666 INFO: ================================================================================
+2026-02-13 14:27:48,666 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:27:48,666 INFO: ================================================================================
+2026-02-13 14:27:48,667 INFO: Processing new accounts
+2026-02-13 14:27:49,280 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:27:54,180 INFO: Case I Generated | Time Elapsed: 0.09 minutes
+2026-02-13 14:27:54,180 INFO: ------------------------------------------------------------
+2026-02-13 14:27:54,206 INFO: ------------------------------------------------------------
+2026-02-13 14:27:54,207 INFO: MERGING RECORDS:
+2026-02-13 14:27:54,213 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:27:54,213 INFO: ------------------------------------------------------------
+2026-02-13 14:27:54,221 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:27:54,221 INFO: ------------------------------------------------------------
+2026-02-13 14:27:54,221 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:27:54,332 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:27:57,577 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.06 minutes
+2026-02-13 14:27:57,578 INFO: ------------------------------------------------------------
+2026-02-13 14:27:57,578 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:28:00,770 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.06 minutes
+2026-02-13 14:28:00,770 INFO: ------------------------------------------------------------
+2026-02-13 14:28:00,770 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:28:00,791 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:28:00,791 INFO: ------------------------------------------------------------
+2026-02-13 14:28:00,828 INFO: 
+>>> PROCESSING FORWARD ENTRIES (1 records)
+2026-02-13 14:28:00,829 INFO: ================================================================================
+2026-02-13 14:28:00,829 INFO: STEP 2b: Process Case II (Forward Entries)
+2026-02-13 14:28:00,829 INFO: ================================================================================
+2026-02-13 14:28:00,829 INFO: Processing forward entries
+2026-02-13 14:28:00,891 INFO: Loading latest summary for Affected Accounts
+2026-02-13 14:28:01,443 INFO: Write partitions [case_2_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:28:14,662 INFO: Case II Generated | Time Elapsed: 0.23 minutes
+2026-02-13 14:28:14,663 INFO: ------------------------------------------------------------
+2026-02-13 14:28:14,663 INFO: ------------------------------------------------------------
+2026-02-13 14:28:14,663 INFO: MERGING FORWARD RECORDS:
+2026-02-13 14:28:14,758 INFO: Write partitions [summary_merge_case_2]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:28:17,142 INFO: Updated Summary | MERGED - CASE II (Forward Records) | Time Elapsed: 0.04 minutes
+2026-02-13 14:28:17,142 INFO: ------------------------------------------------------------
+2026-02-13 14:28:20,325 INFO: Updated latest_summary | MERGE - CASE II (Forward Records) | Time Elapsed: 0.05 minutes
+2026-02-13 14:28:20,326 INFO: ------------------------------------------------------------
+2026-02-13 14:28:20,326 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:28:22,367 INFO: Refreshed watermark tracker table: primary_catalog.main_null.summary_watermark_tracker (mark_committed=True)
+[PASS] null_update
+2026-02-13 14:28:24,218 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_null_update_other_cases.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:28:29 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:28:30 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:28:50,870 INFO: Cleaned case_1
+2026-02-13 14:28:50,899 INFO: Cleaned case_2
+2026-02-13 14:28:50,928 INFO: Cleaned case_3a
+2026-02-13 14:28:50,954 INFO: Cleaned case_3b
+2026-02-13 14:28:50,986 INFO: Cleaned case_4
+2026-02-13 14:28:50,986 INFO: CLEANUP COMPLETED
+2026-02-13 14:28:50,987 INFO: ============================================================
+2026-02-13 14:28:50,987 INFO: ================================================================================
+2026-02-13 14:28:50,987 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:28:50,987 INFO: ================================================================================
+2026-02-13 14:28:50,987 INFO: ================================================================================
+2026-02-13 14:28:50,987 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:28:50,987 INFO: ================================================================================
+2026-02-13 14:28:53,505 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2025-12-01 00:00:00
+2026-02-13 14:28:53,506 INFO: Loading accounts from primary_catalog.main_null.accounts_all
+2026-02-13 14:29:00,102 INFO: Reading from primary_catalog.main_null.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2025-12-01 00:00:00
+2026-02-13 14:29:00,102 INFO: Preparing source data...
+2026-02-13 14:29:00,261 INFO: Applied 36 column mappings
+2026-02-13 14:28:54,030 INFO: Applied 7 column transformations
+2026-02-13 14:28:54,156 INFO: Created 2 inferred columns
+2026-02-13 14:28:54,761 INFO: Validated 7 date columns
+2026-02-13 14:28:54,905 INFO: Source data preparation complete
+2026-02-13 14:28:55,029 INFO: Loading summary metadata from primary_catalog.main_null.latest_summary
+2026-02-13 14:28:55,066 INFO: Loaded metadata for existing accounts
+2026-02-13 14:28:55,066 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:29:03,829 INFO: ------------------------------------------------------------
+2026-02-13 14:29:03,829 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:29:03,829 INFO:   CASE_II: 1 records
+2026-02-13 14:29:03,829 INFO:   CASE_I: 1 records
+2026-02-13 14:29:03,829 INFO: ------------------------------------------------------------
+2026-02-13 14:29:03,829 INFO: Classification | Time Elapsed: 0.21 minutes
+2026-02-13 14:29:03,874 INFO: 
+>>> PROCESSING NEW ACCOUNTS (1 records)
+2026-02-13 14:29:03,874 INFO: ================================================================================
+2026-02-13 14:29:03,874 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:29:03,874 INFO: ================================================================================
+2026-02-13 14:29:03,874 INFO: Processing new accounts
+2026-02-13 14:29:04,492 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:29:09,675 INFO: Case I Generated | Time Elapsed: 0.10 minutes
+2026-02-13 14:29:09,675 INFO: ------------------------------------------------------------
+2026-02-13 14:29:09,705 INFO: ------------------------------------------------------------
+2026-02-13 14:29:09,706 INFO: MERGING RECORDS:
+2026-02-13 14:29:09,716 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:29:09,716 INFO: ------------------------------------------------------------
+2026-02-13 14:29:09,726 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:29:09,726 INFO: ------------------------------------------------------------
+2026-02-13 14:29:09,726 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:29:09,842 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:29:13,555 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.06 minutes
+2026-02-13 14:29:13,556 INFO: ------------------------------------------------------------
+2026-02-13 14:29:13,556 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:29:16,625 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.06 minutes
+2026-02-13 14:29:16,625 INFO: ------------------------------------------------------------
+2026-02-13 14:29:16,625 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:29:16,645 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:29:16,645 INFO: ------------------------------------------------------------
+2026-02-13 14:29:16,675 INFO: 
+>>> PROCESSING FORWARD ENTRIES (1 records)
+2026-02-13 14:29:16,675 INFO: ================================================================================
+2026-02-13 14:29:16,675 INFO: STEP 2b: Process Case II (Forward Entries)
+2026-02-13 14:29:16,676 INFO: ================================================================================
+2026-02-13 14:29:16,676 INFO: Processing forward entries
+2026-02-13 14:29:16,729 INFO: Loading latest summary for Affected Accounts
+2026-02-13 14:29:17,430 INFO: Write partitions [case_2_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:29:32,163 INFO: Case II Generated | Time Elapsed: 0.26 minutes
+2026-02-13 14:29:32,164 INFO: ------------------------------------------------------------
+2026-02-13 14:29:32,164 INFO: ------------------------------------------------------------
+2026-02-13 14:29:32,164 INFO: MERGING FORWARD RECORDS:
+2026-02-13 14:29:32,254 INFO: Write partitions [summary_merge_case_2]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:29:34,911 INFO: Updated Summary | MERGED - CASE II (Forward Records) | Time Elapsed: 0.05 minutes
+2026-02-13 14:29:34,911 INFO: ------------------------------------------------------------
+2026-02-13 14:29:37,365 INFO: Updated latest_summary | MERGE - CASE II (Forward Records) | Time Elapsed: 0.04 minutes
+2026-02-13 14:29:37,365 INFO: ------------------------------------------------------------
+2026-02-13 14:29:37,365 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:29:40,042 INFO: Refreshed watermark tracker table: primary_catalog.main_null.summary_watermark_tracker (mark_committed=True)
+[PASS] null_update
+2026-02-13 14:29:41,398 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_null_update.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:29:46 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:29:46 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:30:02,855 INFO: Cleaned case_1
+2026-02-13 14:30:02,872 INFO: Cleaned case_2
+2026-02-13 14:30:02,887 INFO: Cleaned case_3a
+2026-02-13 14:30:02,904 INFO: Cleaned case_3b
+2026-02-13 14:30:02,925 INFO: Cleaned case_4
+2026-02-13 14:30:02,925 INFO: CLEANUP COMPLETED
+2026-02-13 14:30:02,925 INFO: ============================================================
+2026-02-13 14:30:02,926 INFO: ================================================================================
+2026-02-13 14:30:02,926 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:30:02,926 INFO: ================================================================================
+2026-02-13 14:30:02,926 INFO: ================================================================================
+2026-02-13 14:30:02,926 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:30:02,926 INFO: ================================================================================
+2026-02-13 14:30:05,408 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2025-12-01 00:00:00
+2026-02-13 14:30:05,409 INFO: Loading accounts from primary_catalog.main_null.accounts_all
+2026-02-13 14:30:05,564 INFO: Reading from primary_catalog.main_null.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2025-12-01 00:00:00
+2026-02-13 14:30:05,564 INFO: Preparing source data...
+2026-02-13 14:30:05,709 INFO: Applied 36 column mappings
+2026-02-13 14:30:06,089 INFO: Applied 7 column transformations
+2026-02-13 14:30:06,212 INFO: Created 2 inferred columns
+2026-02-13 14:30:06,344 INFO: Validated 7 date columns
+2026-02-13 14:30:06,478 INFO: Source data preparation complete
+2026-02-13 14:30:06,620 INFO: Loading summary metadata from primary_catalog.main_null.latest_summary
+2026-02-13 14:30:06,663 INFO: Loaded metadata for existing accounts
+2026-02-13 14:30:06,663 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:30:15,005 INFO: ------------------------------------------------------------
+2026-02-13 14:30:15,005 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:30:15,005 INFO:   CASE_II: 1 records
+2026-02-13 14:30:15,005 INFO:   CASE_I: 1 records
+2026-02-13 14:30:15,005 INFO: ------------------------------------------------------------
+2026-02-13 14:30:15,005 INFO: Classification | Time Elapsed: 0.20 minutes
+2026-02-13 14:30:15,082 INFO: 
+>>> PROCESSING NEW ACCOUNTS (1 records)
+2026-02-13 14:30:15,082 INFO: ================================================================================
+2026-02-13 14:30:15,082 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:30:15,082 INFO: ================================================================================
+2026-02-13 14:30:15,082 INFO: Processing new accounts
+2026-02-13 14:30:15,577 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:30:20,824 INFO: Case I Generated | Time Elapsed: 0.10 minutes
+2026-02-13 14:30:20,824 INFO: ------------------------------------------------------------
+2026-02-13 14:30:20,864 INFO: ------------------------------------------------------------
+2026-02-13 14:30:20,864 INFO: MERGING RECORDS:
+2026-02-13 14:30:20,878 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:30:20,878 INFO: ------------------------------------------------------------
+2026-02-13 14:30:20,888 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:30:20,889 INFO: ------------------------------------------------------------
+2026-02-13 14:30:20,889 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:30:21,004 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:30:24,228 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.06 minutes
+2026-02-13 14:30:24,228 INFO: ------------------------------------------------------------
+2026-02-13 14:30:24,228 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:30:26,953 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.06 minutes
+2026-02-13 14:30:26,954 INFO: ------------------------------------------------------------
+2026-02-13 14:30:26,954 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:30:26,978 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:30:26,979 INFO: ------------------------------------------------------------
+2026-02-13 14:30:27,005 INFO: 
+>>> PROCESSING FORWARD ENTRIES (1 records)
+2026-02-13 14:30:27,006 INFO: ================================================================================
+2026-02-13 14:30:27,006 INFO: STEP 2b: Process Case II (Forward Entries)
+2026-02-13 14:30:27,006 INFO: ================================================================================
+2026-02-13 14:30:27,006 INFO: Processing forward entries
+2026-02-13 14:30:27,053 INFO: Loading latest summary for Affected Accounts
+2026-02-13 14:30:27,699 INFO: Write partitions [case_2_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:30:41,247 INFO: Case II Generated | Time Elapsed: 0.24 minutes
+2026-02-13 14:30:41,247 INFO: ------------------------------------------------------------
+2026-02-13 14:30:41,247 INFO: ------------------------------------------------------------
+2026-02-13 14:30:41,247 INFO: MERGING FORWARD RECORDS:
+2026-02-13 14:30:41,352 INFO: Write partitions [summary_merge_case_2]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:30:43,485 INFO: Updated Summary | MERGED - CASE II (Forward Records) | Time Elapsed: 0.04 minutes
+2026-02-13 14:30:43,486 INFO: ------------------------------------------------------------
+2026-02-13 14:30:46,346 INFO: Updated latest_summary | MERGE - CASE II (Forward Records) | Time Elapsed: 0.05 minutes
+2026-02-13 14:30:46,346 INFO: ------------------------------------------------------------
+2026-02-13 14:30:46,346 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:30:48,405 INFO: Refreshed watermark tracker table: primary_catalog.main_null.summary_watermark_tracker (mark_committed=True)
+[PASS] null_update
+2026-02-13 14:30:50,240 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_idempotency.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:30:54 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:30:55 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+[SETUP] Resetting tables...
+[SETUP] Seeding existing summary/latest data...
+[SETUP] Loading one mixed batch (Case I/II/III/IV)...
+[RUN] First pipeline execution...
+2026-02-13 14:31:09,264 INFO: Cleaned case_1
+2026-02-13 14:31:09,287 INFO: Cleaned case_2
+2026-02-13 14:31:09,312 INFO: Cleaned case_3a
+2026-02-13 14:31:09,338 INFO: Cleaned case_3b
+2026-02-13 14:31:09,363 INFO: Cleaned case_4
+2026-02-13 14:31:09,363 INFO: CLEANUP COMPLETED
+2026-02-13 14:31:09,363 INFO: ============================================================
+2026-02-13 14:31:09,363 INFO: ================================================================================
+2026-02-13 14:31:09,363 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:31:09,363 INFO: ================================================================================
+2026-02-13 14:31:09,363 INFO: ================================================================================
+2026-02-13 14:31:09,364 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:31:09,364 INFO: ================================================================================
+2026-02-13 14:31:11,560 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2026-01-01 00:00:00
+2026-02-13 14:31:11,560 INFO: Loading accounts from primary_catalog.main_idempotency.accounts_all
+2026-02-13 14:31:11,746 INFO: Reading from primary_catalog.main_idempotency.accounts_all - (rpt_as_of_mo < 2026-02) & (base_ts > 2026-01-01 00:00:00
+2026-02-13 14:31:11,746 INFO: Preparing source data...
+2026-02-13 14:31:11,972 INFO: Applied 36 column mappings
+2026-02-13 14:31:12,481 INFO: Applied 7 column transformations
+2026-02-13 14:31:12,652 INFO: Created 2 inferred columns
+2026-02-13 14:31:13,249 INFO: Validated 7 date columns
+2026-02-13 14:31:13,378 INFO: Source data preparation complete
+2026-02-13 14:31:13,567 INFO: Loading summary metadata from primary_catalog.main_idempotency.latest_summary
+2026-02-13 14:31:13,613 INFO: Loaded metadata for existing accounts
+2026-02-13 14:31:13,613 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:31:21,601 INFO: ------------------------------------------------------------
+2026-02-13 14:31:21,601 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:31:21,602 INFO:   CASE_I: 2 records
+2026-02-13 14:31:21,602 INFO:   CASE_IV: 1 records
+2026-02-13 14:31:21,602 INFO:   CASE_III: 1 records
+2026-02-13 14:31:21,602 INFO:   CASE_II: 1 records
+2026-02-13 14:31:21,602 INFO: ------------------------------------------------------------
+2026-02-13 14:31:21,602 INFO: Classification | Time Elapsed: 0.20 minutes
+2026-02-13 14:31:21,644 INFO: 
+>>> PROCESSING BACKFILL (1 records)
+2026-02-13 14:31:21,644 INFO: ================================================================================
+2026-02-13 14:31:21,644 INFO: STEP 2c: Process Case III (Backfill)
+2026-02-13 14:31:21,644 INFO: ================================================================================
+2026-02-13 14:31:21,644 INFO: CASE III - Processing backfill records
+2026-02-13 14:31:23,762 INFO: Backfill month range: 2025-12 to 2025-12
+2026-02-13 14:31:23,763 INFO: Reading summary partitions from 2022-12 to 2028-12
+2026-02-13 14:31:23,786 INFO: Applied partition filter: rpt_as_of_mo BETWEEN '2022-12' AND '2028-12'
+2026-02-13 14:31:24,114 INFO: Part A: Creating new summary rows for backfill months...
+2026-02-13 14:31:25,260 INFO: Write partitions [case_3a_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:31:37,949 INFO: Case III Part A Generated | Time Elapsed: 0.27 minutes
+2026-02-13 14:31:37,977 INFO: ------------------------------------------------------------
+2026-02-13 14:31:37,977 INFO: Part B: Updating future summary rows...
+2026-02-13 14:31:41,966 INFO: Write partitions [case_3b_temp]: 200 (base=200, expected_rows=None, scale=1.0)
+2026-02-13 14:31:48,507 INFO: Case III Part B Generated | Time Elapsed: 0.18 minutes
+2026-02-13 14:31:48,507 INFO: ------------------------------------------------------------
+2026-02-13 14:31:48,556 INFO: 
+>>> PROCESSING NEW ACCOUNTS (2 records)
+2026-02-13 14:31:48,556 INFO: ================================================================================
+2026-02-13 14:31:48,556 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:31:48,556 INFO: ================================================================================
+2026-02-13 14:31:48,556 INFO: Processing new accounts
+2026-02-13 14:31:49,162 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=2, scale=1.0)
+2026-02-13 14:31:52,727 INFO: Case I Generated | Time Elapsed: 0.07 minutes
+2026-02-13 14:31:52,727 INFO: ------------------------------------------------------------
+2026-02-13 14:31:52,742 INFO: 
+>>> PROCESSING BULK HISTORICAL (1 records)
+2026-02-13 14:31:52,742 INFO: ================================================================================
+2026-02-13 14:31:52,742 INFO: STEP 2d: Process Case IV (Bulk Historical Load)
+2026-02-13 14:31:52,742 INFO: ================================================================================
+2026-02-13 14:31:52,742 INFO: Processing bulk historical records
+2026-02-13 14:31:52,773 INFO: Building complete history using window functions
+2026-02-13 14:31:56,144 INFO: Write partitions [case_4_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:32:08,048 INFO: Case IV Generated | Time Elapsed: 0.26 minutes
+2026-02-13 14:32:08,048 INFO: ------------------------------------------------------------
+2026-02-13 14:32:08,070 INFO: ------------------------------------------------------------
+2026-02-13 14:32:08,070 INFO: MERGING RECORDS:
+2026-02-13 14:32:09,659 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.03 minutes
+2026-02-13 14:32:09,659 INFO: ------------------------------------------------------------
+2026-02-13 14:32:11,404 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.03 minutes
+2026-02-13 14:32:11,405 INFO: ------------------------------------------------------------
+2026-02-13 14:32:11,405 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:32:11,491 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=3, scale=1.0)
+2026-02-13 14:32:13,464 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.03 minutes
+2026-02-13 14:32:13,464 INFO: ------------------------------------------------------------
+2026-02-13 14:32:13,464 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:32:15,553 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.03 minutes
+2026-02-13 14:32:15,553 INFO: ------------------------------------------------------------
+2026-02-13 14:32:15,553 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:32:17,488 INFO: Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: 0.03 minutes
+2026-02-13 14:32:17,488 INFO: ------------------------------------------------------------
+2026-02-13 14:32:17,520 INFO: 
+>>> PROCESSING FORWARD ENTRIES (1 records)
+2026-02-13 14:32:17,520 INFO: ================================================================================
+2026-02-13 14:32:17,520 INFO: STEP 2b: Process Case II (Forward Entries)
+2026-02-13 14:32:17,520 INFO: ================================================================================
+2026-02-13 14:32:17,520 INFO: Processing forward entries
+2026-02-13 14:32:17,552 INFO: Loading latest summary for Affected Accounts
+2026-02-13 14:32:17,889 INFO: Write partitions [case_2_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:32:27,556 INFO: Case II Generated | Time Elapsed: 0.17 minutes
+2026-02-13 14:32:27,557 INFO: ------------------------------------------------------------
+2026-02-13 14:32:27,557 INFO: ------------------------------------------------------------
+2026-02-13 14:32:27,557 INFO: MERGING FORWARD RECORDS:
+2026-02-13 14:32:27,602 INFO: Write partitions [summary_merge_case_2]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:32:30,025 INFO: Updated Summary | MERGED - CASE II (Forward Records) | Time Elapsed: 0.04 minutes
+2026-02-13 14:32:30,026 INFO: ------------------------------------------------------------
+2026-02-13 14:32:31,622 INFO: Updated latest_summary | MERGE - CASE II (Forward Records) | Time Elapsed: 0.03 minutes
+2026-02-13 14:32:31,622 INFO: ------------------------------------------------------------
+2026-02-13 14:32:31,622 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:32:33,219 INFO: Refreshed watermark tracker table: primary_catalog.main_idempotency.summary_watermark_tracker (mark_committed=True)
+[RUN] Second pipeline execution with same source batch...
+2026-02-13 14:32:35,094 INFO: Cleaned case_1
+2026-02-13 14:32:35,126 INFO: Cleaned case_2
+2026-02-13 14:32:35,160 INFO: Cleaned case_3a
+2026-02-13 14:32:35,192 INFO: Cleaned case_3b
+2026-02-13 14:32:35,222 INFO: Cleaned case_4
+2026-02-13 14:32:35,223 INFO: CLEANUP COMPLETED
+2026-02-13 14:32:35,223 INFO: ============================================================
+2026-02-13 14:32:35,223 INFO: ================================================================================
+2026-02-13 14:32:35,223 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:32:35,223 INFO: ================================================================================
+2026-02-13 14:32:35,223 INFO: ================================================================================
+2026-02-13 14:32:35,223 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:32:35,223 INFO: ================================================================================
+2026-02-13 14:32:36,015 INFO: Using ingestion watermark (tracker) for source filter: base_ts > 2026-02-01 12:00:00
+2026-02-13 14:32:36,015 INFO: Loading accounts from primary_catalog.main_idempotency.accounts_all
+2026-02-13 14:32:36,069 INFO: Reading from primary_catalog.main_idempotency.accounts_all - (rpt_as_of_mo < 2026-02) & (base_ts > 2026-02-01 12:00:00
+2026-02-13 14:32:36,069 INFO: Preparing source data...
+2026-02-13 14:32:36,160 INFO: Applied 36 column mappings
+2026-02-13 14:32:36,286 INFO: Applied 7 column transformations
+2026-02-13 14:32:36,329 INFO: Created 2 inferred columns
+2026-02-13 14:32:36,661 INFO: Validated 7 date columns
+2026-02-13 14:32:36,732 INFO: Source data preparation complete
+2026-02-13 14:32:36,751 INFO: Loading summary metadata from primary_catalog.main_idempotency.latest_summary
+2026-02-13 14:32:36,761 INFO: Loaded metadata for existing accounts
+2026-02-13 14:32:36,761 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:32:37,019 INFO: ------------------------------------------------------------
+2026-02-13 14:32:37,019 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:32:37,019 INFO: ------------------------------------------------------------
+2026-02-13 14:32:37,019 INFO: Classification | Time Elapsed: 0.03 minutes
+2026-02-13 14:32:37,075 INFO: ------------------------------------------------------------
+2026-02-13 14:32:37,075 INFO: MERGING RECORDS:
+2026-02-13 14:32:37,081 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:32:37,081 INFO: ------------------------------------------------------------
+2026-02-13 14:32:37,087 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:32:37,087 INFO: ------------------------------------------------------------
+2026-02-13 14:32:37,087 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:32:37,097 INFO: No Case I/IV records to merge | Time Elapsed: 0.00 minutes
+2026-02-13 14:32:37,097 INFO: ------------------------------------------------------------
+2026-02-13 14:32:37,097 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:32:37,107 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:32:37,107 INFO: ------------------------------------------------------------
+2026-02-13 14:32:37,123 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:32:39,425 INFO: Refreshed watermark tracker table: primary_catalog.main_idempotency.summary_watermark_tracker (mark_committed=True)
+[ASSERT] Verifying no output drift on rerun...
+[PASS] test_idempotency
+2026-02-13 14:32:41,254 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_latest_summary_consistency.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:32:45 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:32:53 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+[SETUP] Resetting tables...
+[SETUP] Seeding existing summary/latest data...
+[SETUP] Loading one backfill input record...
+[RUN] Executing main pipeline...
+2026-02-13 14:33:00,023 INFO: Cleaned case_1
+2026-02-13 14:33:00,047 INFO: Cleaned case_2
+2026-02-13 14:33:00,073 INFO: Cleaned case_3a
+2026-02-13 14:33:00,097 INFO: Cleaned case_3b
+2026-02-13 14:33:00,117 INFO: Cleaned case_4
+2026-02-13 14:33:00,117 INFO: CLEANUP COMPLETED
+2026-02-13 14:33:00,117 INFO: ============================================================
+2026-02-13 14:33:00,118 INFO: ================================================================================
+2026-02-13 14:33:00,118 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:33:00,118 INFO: ================================================================================
+2026-02-13 14:33:00,118 INFO: ================================================================================
+2026-02-13 14:33:00,118 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:33:00,118 INFO: ================================================================================
+2026-02-13 14:33:02,549 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2026-01-05 08:00:00
+2026-02-13 14:33:02,550 INFO: Loading accounts from primary_catalog.main_latest_consistency.accounts_all
+2026-02-13 14:33:02,724 INFO: Reading from primary_catalog.main_latest_consistency.accounts_all - (rpt_as_of_mo < 2026-02) & (base_ts > 2026-01-05 08:00:00
+2026-02-13 14:33:02,725 INFO: Preparing source data...
+2026-02-13 14:33:02,872 INFO: Applied 36 column mappings
+2026-02-13 14:33:03,258 INFO: Applied 7 column transformations
+2026-02-13 14:33:03,421 INFO: Created 2 inferred columns
+2026-02-13 14:33:04,112 INFO: Validated 7 date columns
+2026-02-13 14:33:04,243 INFO: Source data preparation complete
+2026-02-13 14:33:04,453 INFO: Loading summary metadata from primary_catalog.main_latest_consistency.latest_summary
+2026-02-13 14:33:04,509 INFO: Loaded metadata for existing accounts
+2026-02-13 14:33:04,509 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:33:12,138 INFO: ------------------------------------------------------------
+2026-02-13 14:33:12,138 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:33:12,139 INFO:   CASE_III: 1 records
+2026-02-13 14:33:12,139 INFO: ------------------------------------------------------------
+2026-02-13 14:33:12,140 INFO: Classification | Time Elapsed: 0.20 minutes
+2026-02-13 14:33:12,182 INFO: 
+>>> PROCESSING BACKFILL (1 records)
+2026-02-13 14:33:12,182 INFO: ================================================================================
+2026-02-13 14:33:12,182 INFO: STEP 2c: Process Case III (Backfill)
+2026-02-13 14:33:12,182 INFO: ================================================================================
+2026-02-13 14:33:12,182 INFO: CASE III - Processing backfill records
+2026-02-13 14:33:16,370 INFO: Backfill month range: 2025-12 to 2025-12
+2026-02-13 14:33:16,371 INFO: Reading summary partitions from 2022-12 to 2028-12
+2026-02-13 14:33:16,607 INFO: Applied partition filter: rpt_as_of_mo BETWEEN '2022-12' AND '2028-12'
+2026-02-13 14:33:23,585 INFO: Part A: Creating new summary rows for backfill months...
+2026-02-13 14:33:26,978 INFO: Write partitions [case_3a_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:33:58,943 INFO: Case III Part A Generated | Time Elapsed: 0.78 minutes
+2026-02-13 14:33:58,944 INFO: ------------------------------------------------------------
+2026-02-13 14:33:58,944 INFO: Part B: Updating future summary rows...
+2026-02-13 14:34:00,441 INFO: Write partitions [case_3b_temp]: 200 (base=200, expected_rows=None, scale=1.0)
+2026-02-13 14:34:06,938 INFO: Case III Part B Generated | Time Elapsed: 0.13 minutes
+2026-02-13 14:34:06,938 INFO: ------------------------------------------------------------
+2026-02-13 14:34:06,983 INFO: ------------------------------------------------------------
+2026-02-13 14:34:06,983 INFO: MERGING RECORDS:
+2026-02-13 14:34:09,258 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.04 minutes
+2026-02-13 14:34:09,259 INFO: ------------------------------------------------------------
+2026-02-13 14:34:11,443 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.04 minutes
+2026-02-13 14:34:11,443 INFO: ------------------------------------------------------------
+2026-02-13 14:34:11,443 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:34:11,468 INFO: No Case I/IV records to merge | Time Elapsed: 0.00 minutes
+2026-02-13 14:34:11,468 INFO: ------------------------------------------------------------
+2026-02-13 14:34:11,468 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:34:15,823 INFO: Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: 0.07 minutes
+2026-02-13 14:34:15,824 INFO: ------------------------------------------------------------
+2026-02-13 14:34:15,857 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:34:17,947 INFO: Refreshed watermark tracker table: primary_catalog.main_latest_consistency.summary_watermark_tracker (mark_committed=True)
+[ASSERT] Sanity-checking summary was updated by backfill...
+[ASSERT] Validating latest_summary consistency with summary...
+[PASS] test_latest_summary_consistency
+2026-02-13 14:34:23,821 INFO: Closing down clientserver connection
+====================================================================================================
+RUNNING test_recovery.py
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:34:32 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:34:33 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+2026-02-13 14:34:54,886 INFO: Cleaned case_1
+2026-02-13 14:34:54,909 INFO: Cleaned case_2
+2026-02-13 14:34:54,927 INFO: Cleaned case_3a
+2026-02-13 14:34:54,947 INFO: Cleaned case_3b
+2026-02-13 14:34:54,965 INFO: Cleaned case_4
+2026-02-13 14:34:54,965 INFO: CLEANUP COMPLETED
+2026-02-13 14:34:54,966 INFO: ============================================================
+2026-02-13 14:34:54,966 INFO: ================================================================================
+2026-02-13 14:34:54,966 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:34:54,966 INFO: ================================================================================
+2026-02-13 14:34:54,966 INFO: ================================================================================
+2026-02-13 14:34:54,966 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:34:54,966 INFO: ================================================================================
+2026-02-13 14:34:57,817 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2020-01-02 00:00:00
+2026-02-13 14:34:57,819 INFO: Loading accounts from primary_catalog.main_recovery.accounts_all
+2026-02-13 14:34:58,074 INFO: Reading from primary_catalog.main_recovery.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2020-01-02 00:00:00
+2026-02-13 14:34:58,075 INFO: Preparing source data...
+2026-02-13 14:34:58,313 INFO: Applied 36 column mappings
+2026-02-13 14:34:58,890 INFO: Applied 7 column transformations
+2026-02-13 14:34:59,088 INFO: Created 2 inferred columns
+2026-02-13 14:35:00,088 INFO: Validated 7 date columns
+2026-02-13 14:35:00,472 INFO: Source data preparation complete
+2026-02-13 14:35:00,803 INFO: Loading summary metadata from primary_catalog.main_recovery.latest_summary
+2026-02-13 14:35:00,931 INFO: Loaded metadata for existing accounts
+2026-02-13 14:35:00,931 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:35:10,334 INFO: ------------------------------------------------------------
+2026-02-13 14:35:10,335 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:35:10,335 INFO:   CASE_I: 1 records
+2026-02-13 14:35:10,336 INFO: ------------------------------------------------------------
+2026-02-13 14:35:10,336 INFO: Classification | Time Elapsed: 0.26 minutes
+2026-02-13 14:35:10,405 INFO: 
+>>> PROCESSING NEW ACCOUNTS (1 records)
+2026-02-13 14:35:10,405 INFO: ================================================================================
+2026-02-13 14:35:10,405 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:35:10,406 INFO: ================================================================================
+2026-02-13 14:35:10,406 INFO: Processing new accounts
+2026-02-13 14:35:11,340 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:35:18,512 INFO: Case I Generated | Time Elapsed: 0.14 minutes
+2026-02-13 14:35:18,513 INFO: ------------------------------------------------------------
+2026-02-13 14:35:18,556 INFO: ------------------------------------------------------------
+2026-02-13 14:35:18,556 INFO: MERGING RECORDS:
+2026-02-13 14:35:18,570 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:35:18,571 INFO: ------------------------------------------------------------
+2026-02-13 14:35:18,583 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:35:18,584 INFO: ------------------------------------------------------------
+2026-02-13 14:35:18,584 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:35:18,721 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:35:24,361 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.10 minutes
+2026-02-13 14:35:24,361 INFO: ------------------------------------------------------------
+2026-02-13 14:35:24,362 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:35:26,824 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.10 minutes
+2026-02-13 14:35:26,824 INFO: ------------------------------------------------------------
+2026-02-13 14:35:26,824 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:35:26,841 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:35:26,842 INFO: ------------------------------------------------------------
+2026-02-13 14:35:26,876 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:35:29,996 INFO: Refreshed watermark tracker table: primary_catalog.main_recovery.summary_watermark_tracker (mark_committed=True)
+2026-02-13 14:35:31,262 INFO: Cleaned case_1
+2026-02-13 14:35:31,281 INFO: Cleaned case_2
+2026-02-13 14:35:31,305 INFO: Cleaned case_3a
+2026-02-13 14:35:31,324 INFO: Cleaned case_3b
+2026-02-13 14:35:31,343 INFO: Cleaned case_4
+2026-02-13 14:35:31,344 INFO: CLEANUP COMPLETED
+2026-02-13 14:35:31,344 INFO: ============================================================
+2026-02-13 14:35:31,344 INFO: ================================================================================
+2026-02-13 14:35:31,344 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:35:31,345 INFO: ================================================================================
+2026-02-13 14:35:31,346 INFO: ================================================================================
+2026-02-13 14:35:31,346 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:35:31,347 INFO: ================================================================================
+2026-02-13 14:35:32,712 INFO: Using ingestion watermark (tracker) for source filter: base_ts > 2026-02-01 00:00:00
+2026-02-13 14:35:32,713 INFO: Loading accounts from primary_catalog.main_recovery.accounts_all
+2026-02-13 14:35:32,774 INFO: Reading from primary_catalog.main_recovery.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2026-02-01 00:00:00
+2026-02-13 14:35:32,775 INFO: Preparing source data...
+2026-02-13 14:35:33,004 INFO: Applied 36 column mappings
+2026-02-13 14:35:33,190 INFO: Applied 7 column transformations
+2026-02-13 14:35:33,257 INFO: Created 2 inferred columns
+2026-02-13 14:35:33,723 INFO: Validated 7 date columns
+2026-02-13 14:35:33,830 INFO: Source data preparation complete
+2026-02-13 14:35:33,864 INFO: Loading summary metadata from primary_catalog.main_recovery.latest_summary
+2026-02-13 14:35:33,877 INFO: Loaded metadata for existing accounts
+2026-02-13 14:35:33,877 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:35:35,103 INFO: ------------------------------------------------------------
+2026-02-13 14:35:35,104 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:35:35,104 INFO: ------------------------------------------------------------
+2026-02-13 14:35:35,104 INFO: Classification | Time Elapsed: 0.06 minutes
+2026-02-13 14:35:35,163 INFO: ------------------------------------------------------------
+2026-02-13 14:35:35,163 INFO: MERGING RECORDS:
+2026-02-13 14:35:35,172 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:35:35,172 INFO: ------------------------------------------------------------
+2026-02-13 14:35:35,179 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:35:35,180 INFO: ------------------------------------------------------------
+2026-02-13 14:35:35,180 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:35:35,195 INFO: No Case I/IV records to merge | Time Elapsed: 0.00 minutes
+2026-02-13 14:35:35,195 INFO: ------------------------------------------------------------
+2026-02-13 14:35:35,196 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:35:35,212 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:35:35,213 INFO: ------------------------------------------------------------
+2026-02-13 14:35:35,247 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:35:38,344 INFO: Refreshed watermark tracker table: primary_catalog.main_recovery.summary_watermark_tracker (mark_committed=True)
+2026-02-13 14:35:40,215 INFO: Cleaned case_1
+2026-02-13 14:35:40,225 INFO: Cleaned case_2
+2026-02-13 14:35:40,238 INFO: Cleaned case_3a
+2026-02-13 14:35:40,250 INFO: Cleaned case_3b
+2026-02-13 14:35:40,261 INFO: Cleaned case_4
+2026-02-13 14:35:40,262 INFO: CLEANUP COMPLETED
+2026-02-13 14:35:40,262 INFO: ============================================================
+2026-02-13 14:35:40,262 INFO: ================================================================================
+2026-02-13 14:35:40,262 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:35:40,262 INFO: ================================================================================
+2026-02-13 14:35:40,262 INFO: ================================================================================
+2026-02-13 14:35:40,262 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:35:40,262 INFO: ================================================================================
+2026-02-13 14:35:41,170 INFO: Using ingestion watermark (tracker) for source filter: base_ts > 2026-02-01 00:00:00
+2026-02-13 14:35:41,170 INFO: Loading accounts from primary_catalog.main_recovery.accounts_all
+2026-02-13 14:35:41,206 INFO: Reading from primary_catalog.main_recovery.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2026-02-01 00:00:00
+2026-02-13 14:35:41,206 INFO: Preparing source data...
+2026-02-13 14:35:41,336 INFO: Applied 36 column mappings
+2026-02-13 14:35:41,433 INFO: Applied 7 column transformations
+2026-02-13 14:35:41,471 INFO: Created 2 inferred columns
+2026-02-13 14:35:41,768 INFO: Validated 7 date columns
+2026-02-13 14:35:41,838 INFO: Source data preparation complete
+2026-02-13 14:35:41,859 INFO: Loading summary metadata from primary_catalog.main_recovery.latest_summary
+2026-02-13 14:35:41,870 INFO: Loaded metadata for existing accounts
+2026-02-13 14:35:41,870 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:35:46,451 INFO: ------------------------------------------------------------
+2026-02-13 14:35:46,451 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:35:46,451 INFO:   CASE_II: 1 records
+2026-02-13 14:35:46,451 INFO: ------------------------------------------------------------
+2026-02-13 14:35:46,452 INFO: Classification | Time Elapsed: 0.10 minutes
+2026-02-13 14:35:46,510 INFO: ------------------------------------------------------------
+2026-02-13 14:35:46,510 INFO: MERGING RECORDS:
+2026-02-13 14:35:46,519 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:35:46,519 INFO: ------------------------------------------------------------
+2026-02-13 14:35:46,525 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:35:46,525 INFO: ------------------------------------------------------------
+2026-02-13 14:35:46,525 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:35:46,540 INFO: No Case I/IV records to merge | Time Elapsed: 0.00 minutes
+2026-02-13 14:35:46,540 INFO: ------------------------------------------------------------
+2026-02-13 14:35:46,540 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:35:46,555 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:35:46,555 INFO: ------------------------------------------------------------
+2026-02-13 14:35:46,585 INFO: 
+>>> PROCESSING FORWARD ENTRIES (1 records)
+2026-02-13 14:35:46,586 INFO: ================================================================================
+2026-02-13 14:35:46,586 INFO: STEP 2b: Process Case II (Forward Entries)
+2026-02-13 14:35:46,586 INFO: ================================================================================
+2026-02-13 14:35:46,586 INFO: Processing forward entries
+2026-02-13 14:35:46,625 INFO: Loading latest summary for Affected Accounts
+2026-02-13 14:35:47,342 INFO: Write partitions [case_2_temp]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:35:56,094 INFO: Case II Generated | Time Elapsed: 0.16 minutes
+2026-02-13 14:35:56,094 INFO: ------------------------------------------------------------
+2026-02-13 14:35:56,095 INFO: ------------------------------------------------------------
+2026-02-13 14:35:56,095 INFO: MERGING FORWARD RECORDS:
+2026-02-13 14:35:54,856 INFO: Write partitions [summary_merge_case_2]: 50 (base=200, expected_rows=1, scale=1.0)
+2026-02-13 14:35:56,987 INFO: Updated Summary | MERGED - CASE II (Forward Records) | Time Elapsed: 0.01 minutes
+2026-02-13 14:35:56,987 INFO: ------------------------------------------------------------
+2026-02-13 14:35:59,833 INFO: Updated latest_summary | MERGE - CASE II (Forward Records) | Time Elapsed: 0.05 minutes
+2026-02-13 14:35:59,833 INFO: ------------------------------------------------------------
+2026-02-13 14:35:59,834 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:36:02,332 INFO: Refreshed watermark tracker table: primary_catalog.main_recovery.summary_watermark_tracker (mark_committed=True)
+[PASS] recovery
+====================================================================================================
+RUNNING test_aggressive_idempotency.py --scale TINY --cycles 2 --reruns 2
+====================================================================================================
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+26/02/13 14:36:12 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+26/02/13 14:36:13 WARN Utils: Service 'SparkUI' could not bind on port 4040. Attempting port 4041.
+[SETUP] Resetting tables (scale=TINY, cycles=2, reruns=2)...
+[CYCLE 1] Loading source rows: 56
+[CYCLE 1] Run #1 (state-changing run)
+2026-02-13 14:36:29,947 INFO: Cleaned case_1
+2026-02-13 14:36:29,989 INFO: Cleaned case_2
+2026-02-13 14:36:30,027 INFO: Cleaned case_3a
+2026-02-13 14:36:30,048 INFO: Cleaned case_3b
+2026-02-13 14:36:30,066 INFO: Cleaned case_4
+2026-02-13 14:36:30,067 INFO: CLEANUP COMPLETED
+2026-02-13 14:36:30,067 INFO: ============================================================
+2026-02-13 14:36:30,067 INFO: ================================================================================
+2026-02-13 14:36:30,067 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:36:30,067 INFO: ================================================================================
+2026-02-13 14:36:30,067 INFO: ================================================================================
+2026-02-13 14:36:30,067 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:36:30,067 INFO: ================================================================================
+2026-02-13 14:36:31,972 INFO: Using ingestion watermark (fallback_summary) for source filter: base_ts > 2026-01-01 00:00:41
+2026-02-13 14:36:31,973 INFO: Loading accounts from primary_catalog.main_aggressive_idempotency.accounts_all
+2026-02-13 14:36:32,108 INFO: Reading from primary_catalog.main_aggressive_idempotency.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2026-01-01 00:00:41
+2026-02-13 14:36:32,108 INFO: Preparing source data...
+2026-02-13 14:36:32,277 INFO: Applied 36 column mappings
+2026-02-13 14:36:32,826 INFO: Applied 7 column transformations
+2026-02-13 14:36:33,062 INFO: Created 2 inferred columns
+2026-02-13 14:36:33,704 INFO: Validated 7 date columns
+2026-02-13 14:36:33,852 INFO: Source data preparation complete
+2026-02-13 14:36:33,977 INFO: Loading summary metadata from primary_catalog.main_aggressive_idempotency.latest_summary
+2026-02-13 14:36:34,031 INFO: Loaded metadata for existing accounts
+2026-02-13 14:36:34,031 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:36:42,789 INFO: ------------------------------------------------------------
+2026-02-13 14:36:42,790 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:36:42,791 INFO:   CASE_I: 20 records
+2026-02-13 14:36:42,791 INFO:   CASE_III: 10 records
+2026-02-13 14:36:42,791 INFO:   CASE_IV: 8 records
+2026-02-13 14:36:42,791 INFO:   CASE_II: 12 records
+2026-02-13 14:36:42,791 INFO: ------------------------------------------------------------
+2026-02-13 14:36:42,792 INFO: Classification | Time Elapsed: 0.21 minutes
+2026-02-13 14:36:42,813 INFO: 
+>>> PROCESSING BACKFILL (10 records)
+2026-02-13 14:36:42,813 INFO: ================================================================================
+2026-02-13 14:36:42,813 INFO: STEP 2c: Process Case III (Backfill)
+2026-02-13 14:36:42,813 INFO: ================================================================================
+2026-02-13 14:36:42,813 INFO: CASE III - Processing backfill records
+2026-02-13 14:36:44,714 INFO: Backfill month range: 2026-09 to 2026-09
+2026-02-13 14:36:44,714 INFO: Reading summary partitions from 2023-09 to 2029-09
+2026-02-13 14:36:44,736 INFO: Applied partition filter: rpt_as_of_mo BETWEEN '2023-09' AND '2029-09'
+2026-02-13 14:36:45,081 INFO: Part A: Creating new summary rows for backfill months...
+2026-02-13 14:36:46,136 INFO: Write partitions [case_3a_temp]: 50 (base=200, expected_rows=10, scale=1.0)
+2026-02-13 14:37:06,263 INFO: Case III Part A Generated | Time Elapsed: 0.39 minutes
+2026-02-13 14:37:06,263 INFO: ------------------------------------------------------------
+2026-02-13 14:37:06,263 INFO: Part B: Updating future summary rows...
+2026-02-13 14:37:09,569 INFO: Write partitions [case_3b_temp]: 200 (base=200, expected_rows=None, scale=1.0)
+2026-02-13 14:37:18,965 INFO: Case III Part B Generated | Time Elapsed: 0.21 minutes
+2026-02-13 14:37:18,966 INFO: ------------------------------------------------------------
+2026-02-13 14:37:18,995 INFO: 
+>>> PROCESSING NEW ACCOUNTS (20 records)
+2026-02-13 14:37:18,995 INFO: ================================================================================
+2026-02-13 14:37:18,995 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:37:18,995 INFO: ================================================================================
+2026-02-13 14:37:18,996 INFO: Processing new accounts
+2026-02-13 14:37:19,628 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=20, scale=1.0)
+2026-02-13 14:37:23,126 INFO: Case I Generated | Time Elapsed: 0.07 minutes
+2026-02-13 14:37:23,127 INFO: ------------------------------------------------------------
+2026-02-13 14:37:23,150 INFO: 
+>>> PROCESSING BULK HISTORICAL (8 records)
+2026-02-13 14:37:23,151 INFO: ================================================================================
+2026-02-13 14:37:23,151 INFO: STEP 2d: Process Case IV (Bulk Historical Load)
+2026-02-13 14:37:23,151 INFO: ================================================================================
+2026-02-13 14:37:23,151 INFO: Processing bulk historical records
+2026-02-13 14:37:23,213 INFO: Building complete history using window functions
+2026-02-13 14:37:26,659 INFO: Write partitions [case_4_temp]: 50 (base=200, expected_rows=8, scale=1.0)
+2026-02-13 14:37:45,647 INFO: Case IV Generated | Time Elapsed: 0.37 minutes
+2026-02-13 14:37:45,647 INFO: ------------------------------------------------------------
+2026-02-13 14:37:45,667 INFO: ------------------------------------------------------------
+2026-02-13 14:37:45,667 INFO: MERGING RECORDS:
+2026-02-13 14:37:47,404 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.03 minutes
+2026-02-13 14:37:47,404 INFO: ------------------------------------------------------------
+2026-02-13 14:37:49,174 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.03 minutes
+2026-02-13 14:37:49,174 INFO: ------------------------------------------------------------
+2026-02-13 14:37:49,174 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:37:49,284 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=28, scale=1.0)
+2026-02-13 14:37:51,378 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.04 minutes
+2026-02-13 14:37:51,378 INFO: ------------------------------------------------------------
+2026-02-13 14:37:51,378 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:37:54,423 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.04 minutes
+2026-02-13 14:37:54,424 INFO: ------------------------------------------------------------
+2026-02-13 14:37:54,424 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:37:58,298 INFO: Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: 0.06 minutes
+2026-02-13 14:37:58,298 INFO: ------------------------------------------------------------
+2026-02-13 14:37:58,334 INFO: 
+>>> PROCESSING FORWARD ENTRIES (12 records)
+2026-02-13 14:37:58,334 INFO: ================================================================================
+2026-02-13 14:37:58,335 INFO: STEP 2b: Process Case II (Forward Entries)
+2026-02-13 14:37:58,335 INFO: ================================================================================
+2026-02-13 14:37:58,335 INFO: Processing forward entries
+2026-02-13 14:37:58,405 INFO: Loading latest summary for Affected Accounts
+2026-02-13 14:37:58,813 INFO: Write partitions [case_2_temp]: 50 (base=200, expected_rows=12, scale=1.0)
+2026-02-13 14:38:11,165 INFO: Case II Generated | Time Elapsed: 0.21 minutes
+2026-02-13 14:38:11,165 INFO: ------------------------------------------------------------
+2026-02-13 14:38:11,165 INFO: ------------------------------------------------------------
+2026-02-13 14:38:11,165 INFO: MERGING FORWARD RECORDS:
+2026-02-13 14:38:11,260 INFO: Write partitions [summary_merge_case_2]: 50 (base=200, expected_rows=12, scale=1.0)
+2026-02-13 14:38:13,832 INFO: Updated Summary | MERGED - CASE II (Forward Records) | Time Elapsed: 0.04 minutes
+2026-02-13 14:38:13,832 INFO: ------------------------------------------------------------
+2026-02-13 14:38:08,766 INFO: Updated latest_summary | MERGE - CASE II (Forward Records) | Time Elapsed: -0.08 minutes
+2026-02-13 14:38:08,766 INFO: ------------------------------------------------------------
+2026-02-13 14:38:08,766 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:38:10,486 INFO: Refreshed watermark tracker table: primary_catalog.main_aggressive_idempotency.summary_watermark_tracker (mark_committed=True)
+[CYCLE 1] Rerun #1 (idempotency check)
+2026-02-13 14:38:14,453 INFO: Cleaned case_1
+2026-02-13 14:38:14,489 INFO: Cleaned case_2
+2026-02-13 14:38:14,524 INFO: Cleaned case_3a
+2026-02-13 14:38:14,559 INFO: Cleaned case_3b
+2026-02-13 14:38:14,605 INFO: Cleaned case_4
+2026-02-13 14:38:14,605 INFO: CLEANUP COMPLETED
+2026-02-13 14:38:14,605 INFO: ============================================================
+2026-02-13 14:38:14,605 INFO: ================================================================================
+2026-02-13 14:38:14,606 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:38:14,606 INFO: ================================================================================
+2026-02-13 14:38:14,606 INFO: ================================================================================
+2026-02-13 14:38:14,607 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:38:14,607 INFO: ================================================================================
+2026-02-13 14:38:15,407 INFO: Using ingestion watermark (tracker) for source filter: base_ts > 2026-02-02 03:00:15
+2026-02-13 14:38:15,408 INFO: Loading accounts from primary_catalog.main_aggressive_idempotency.accounts_all
+2026-02-13 14:38:15,435 INFO: Reading from primary_catalog.main_aggressive_idempotency.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2026-02-02 03:00:15
+2026-02-13 14:38:15,436 INFO: Preparing source data...
+2026-02-13 14:38:15,612 INFO: Applied 36 column mappings
+2026-02-13 14:38:15,710 INFO: Applied 7 column transformations
+2026-02-13 14:38:15,740 INFO: Created 2 inferred columns
+2026-02-13 14:38:16,112 INFO: Validated 7 date columns
+2026-02-13 14:38:16,174 INFO: Source data preparation complete
+2026-02-13 14:38:16,191 INFO: Loading summary metadata from primary_catalog.main_aggressive_idempotency.latest_summary
+2026-02-13 14:38:16,202 INFO: Loaded metadata for existing accounts
+2026-02-13 14:38:16,202 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:38:17,018 INFO: ------------------------------------------------------------
+2026-02-13 14:38:17,018 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:38:17,018 INFO: ------------------------------------------------------------
+2026-02-13 14:38:17,018 INFO: Classification | Time Elapsed: 0.04 minutes
+2026-02-13 14:38:17,061 INFO: ------------------------------------------------------------
+2026-02-13 14:38:17,061 INFO: MERGING RECORDS:
+2026-02-13 14:38:17,068 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:38:17,068 INFO: ------------------------------------------------------------
+2026-02-13 14:38:17,075 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:38:17,075 INFO: ------------------------------------------------------------
+2026-02-13 14:38:17,075 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:38:17,086 INFO: No Case I/IV records to merge | Time Elapsed: 0.00 minutes
+2026-02-13 14:38:17,086 INFO: ------------------------------------------------------------
+2026-02-13 14:38:17,086 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:38:17,097 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:38:17,097 INFO: ------------------------------------------------------------
+2026-02-13 14:38:17,113 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:38:19,411 INFO: Refreshed watermark tracker table: primary_catalog.main_aggressive_idempotency.summary_watermark_tracker (mark_committed=True)
+[CYCLE 1] Rerun #2 (idempotency check)
+2026-02-13 14:38:22,507 INFO: Cleaned case_1
+2026-02-13 14:38:22,521 INFO: Cleaned case_2
+2026-02-13 14:38:22,534 INFO: Cleaned case_3a
+2026-02-13 14:38:22,545 INFO: Cleaned case_3b
+2026-02-13 14:38:22,555 INFO: Cleaned case_4
+2026-02-13 14:38:22,555 INFO: CLEANUP COMPLETED
+2026-02-13 14:38:22,555 INFO: ============================================================
+2026-02-13 14:38:22,555 INFO: ================================================================================
+2026-02-13 14:38:22,555 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:38:22,555 INFO: ================================================================================
+2026-02-13 14:38:22,555 INFO: ================================================================================
+2026-02-13 14:38:22,555 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:38:22,555 INFO: ================================================================================
+2026-02-13 14:38:23,606 INFO: Using ingestion watermark (tracker) for source filter: base_ts > 2026-02-02 03:00:15
+2026-02-13 14:38:23,606 INFO: Loading accounts from primary_catalog.main_aggressive_idempotency.accounts_all
+2026-02-13 14:38:23,641 INFO: Reading from primary_catalog.main_aggressive_idempotency.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2026-02-02 03:00:15
+2026-02-13 14:38:23,642 INFO: Preparing source data...
+2026-02-13 14:38:23,828 INFO: Applied 36 column mappings
+2026-02-13 14:38:24,016 INFO: Applied 7 column transformations
+2026-02-13 14:38:24,078 INFO: Created 2 inferred columns
+2026-02-13 14:38:24,545 INFO: Validated 7 date columns
+2026-02-13 14:38:24,658 INFO: Source data preparation complete
+2026-02-13 14:38:24,684 INFO: Loading summary metadata from primary_catalog.main_aggressive_idempotency.latest_summary
+2026-02-13 14:38:24,701 INFO: Loaded metadata for existing accounts
+2026-02-13 14:38:24,701 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:38:25,490 INFO: ------------------------------------------------------------
+2026-02-13 14:38:25,491 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:38:25,491 INFO: ------------------------------------------------------------
+2026-02-13 14:38:25,491 INFO: Classification | Time Elapsed: 0.05 minutes
+2026-02-13 14:38:25,555 INFO: ------------------------------------------------------------
+2026-02-13 14:38:25,555 INFO: MERGING RECORDS:
+2026-02-13 14:38:25,565 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:38:25,565 INFO: ------------------------------------------------------------
+2026-02-13 14:38:25,571 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:38:25,571 INFO: ------------------------------------------------------------
+2026-02-13 14:38:25,571 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:38:25,582 INFO: No Case I/IV records to merge | Time Elapsed: 0.00 minutes
+2026-02-13 14:38:25,582 INFO: ------------------------------------------------------------
+2026-02-13 14:38:25,582 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:38:25,593 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:38:25,594 INFO: ------------------------------------------------------------
+2026-02-13 14:38:25,613 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:38:33,801 INFO: Refreshed watermark tracker table: primary_catalog.main_aggressive_idempotency.summary_watermark_tracker (mark_committed=True)
+[CYCLE 1] PASS
+[CYCLE 2] Loading source rows: 56
+[CYCLE 2] Run #1 (state-changing run)
+2026-02-13 14:38:31,586 INFO: Cleaned case_1
+2026-02-13 14:38:31,599 INFO: Cleaned case_2
+2026-02-13 14:38:31,614 INFO: Cleaned case_3a
+2026-02-13 14:38:31,645 INFO: Cleaned case_3b
+2026-02-13 14:38:31,663 INFO: Cleaned case_4
+2026-02-13 14:38:31,663 INFO: CLEANUP COMPLETED
+2026-02-13 14:38:31,664 INFO: ============================================================
+2026-02-13 14:38:31,664 INFO: ================================================================================
+2026-02-13 14:38:31,664 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:38:31,664 INFO: ================================================================================
+2026-02-13 14:38:31,664 INFO: ================================================================================
+2026-02-13 14:38:31,664 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:38:31,664 INFO: ================================================================================
+2026-02-13 14:38:38,980 INFO: Using ingestion watermark (tracker) for source filter: base_ts > 2026-02-02 03:00:15
+2026-02-13 14:38:38,981 INFO: Loading accounts from primary_catalog.main_aggressive_idempotency.accounts_all
+2026-02-13 14:38:32,341 INFO: Reading from primary_catalog.main_aggressive_idempotency.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2026-02-02 03:00:15
+2026-02-13 14:38:32,341 INFO: Preparing source data...
+2026-02-13 14:38:32,536 INFO: Applied 36 column mappings
+2026-02-13 14:38:32,621 INFO: Applied 7 column transformations
+2026-02-13 14:38:32,656 INFO: Created 2 inferred columns
+2026-02-13 14:38:33,112 INFO: Validated 7 date columns
+2026-02-13 14:38:33,190 INFO: Source data preparation complete
+2026-02-13 14:38:33,209 INFO: Loading summary metadata from primary_catalog.main_aggressive_idempotency.latest_summary
+2026-02-13 14:38:33,221 INFO: Loaded metadata for existing accounts
+2026-02-13 14:38:33,221 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:38:37,354 INFO: ------------------------------------------------------------
+2026-02-13 14:38:37,354 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:38:37,354 INFO:   CASE_II: 12 records
+2026-02-13 14:38:37,354 INFO:   CASE_III: 10 records
+2026-02-13 14:38:37,354 INFO:   CASE_I: 20 records
+2026-02-13 14:38:37,355 INFO:   CASE_IV: 8 records
+2026-02-13 14:38:37,355 INFO: ------------------------------------------------------------
+2026-02-13 14:38:37,355 INFO: Classification | Time Elapsed: 0.09 minutes
+2026-02-13 14:38:37,374 INFO: 
+>>> PROCESSING BACKFILL (10 records)
+2026-02-13 14:38:37,374 INFO: ================================================================================
+2026-02-13 14:38:37,374 INFO: STEP 2c: Process Case III (Backfill)
+2026-02-13 14:38:37,374 INFO: ================================================================================
+2026-02-13 14:38:37,374 INFO: CASE III - Processing backfill records
+2026-02-13 14:38:38,324 INFO: Backfill month range: 2026-09 to 2026-11
+2026-02-13 14:38:38,324 INFO: Reading summary partitions from 2023-09 to 2029-11
+2026-02-13 14:38:38,342 INFO: Applied partition filter: rpt_as_of_mo BETWEEN '2023-09' AND '2029-11'
+2026-02-13 14:38:38,586 INFO: Part A: Creating new summary rows for backfill months...
+2026-02-13 14:38:39,281 INFO: Write partitions [case_3a_temp]: 50 (base=200, expected_rows=10, scale=1.0)
+2026-02-13 14:38:47,955 INFO: Case III Part A Generated | Time Elapsed: 0.18 minutes
+2026-02-13 14:38:47,955 INFO: ------------------------------------------------------------
+2026-02-13 14:38:47,956 INFO: Part B: Updating future summary rows...
+2026-02-13 14:38:50,209 INFO: Write partitions [case_3b_temp]: 200 (base=200, expected_rows=None, scale=1.0)
+2026-02-13 14:38:54,819 INFO: Case III Part B Generated | Time Elapsed: 0.11 minutes
+2026-02-13 14:38:54,820 INFO: ------------------------------------------------------------
+2026-02-13 14:38:54,854 INFO: 
+>>> PROCESSING NEW ACCOUNTS (20 records)
+2026-02-13 14:38:54,855 INFO: ================================================================================
+2026-02-13 14:38:54,855 INFO: STEP 2a: Process Case I (New Accounts)
+2026-02-13 14:38:54,855 INFO: ================================================================================
+2026-02-13 14:38:54,855 INFO: Processing new accounts
+2026-02-13 14:38:55,346 INFO: Write partitions [case_1_temp]: 50 (base=200, expected_rows=20, scale=1.0)
+2026-02-13 14:38:58,166 INFO: Case I Generated | Time Elapsed: 0.06 minutes
+2026-02-13 14:38:58,166 INFO: ------------------------------------------------------------
+2026-02-13 14:38:58,184 INFO: 
+>>> PROCESSING BULK HISTORICAL (8 records)
+2026-02-13 14:38:58,184 INFO: ================================================================================
+2026-02-13 14:38:58,184 INFO: STEP 2d: Process Case IV (Bulk Historical Load)
+2026-02-13 14:38:58,184 INFO: ================================================================================
+2026-02-13 14:38:58,184 INFO: Processing bulk historical records
+2026-02-13 14:38:58,232 INFO: Building complete history using window functions
+2026-02-13 14:39:01,100 INFO: Write partitions [case_4_temp]: 50 (base=200, expected_rows=8, scale=1.0)
+2026-02-13 14:39:08,829 INFO: Case IV Generated | Time Elapsed: 0.18 minutes
+2026-02-13 14:39:08,829 INFO: ------------------------------------------------------------
+2026-02-13 14:39:08,835 INFO: ------------------------------------------------------------
+2026-02-13 14:39:08,835 INFO: MERGING RECORDS:
+2026-02-13 14:39:10,065 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.02 minutes
+2026-02-13 14:39:10,066 INFO: ------------------------------------------------------------
+2026-02-13 14:39:11,475 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.02 minutes
+2026-02-13 14:39:11,475 INFO: ------------------------------------------------------------
+2026-02-13 14:39:11,476 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:39:11,575 INFO: Write partitions [summary_merge_case_1_4]: 50 (base=200, expected_rows=28, scale=1.0)
+2026-02-13 14:39:13,899 INFO: Updated Summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.04 minutes
+2026-02-13 14:39:13,900 INFO: ------------------------------------------------------------
+2026-02-13 14:39:13,900 INFO: UPDATING LATEST SUMMARY:
+2026-02-13 14:39:16,499 INFO: Updated latest_summary | MERGED - CASE I & IV (New Records + Bulk Historical) | Time Elapsed: 0.04 minutes
+2026-02-13 14:39:16,500 INFO: ------------------------------------------------------------
+2026-02-13 14:39:16,500 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:39:18,811 INFO: Updated latest_summary | MERGE - CASE III candidates | Time Elapsed: 0.04 minutes
+2026-02-13 14:39:18,811 INFO: ------------------------------------------------------------
+2026-02-13 14:39:18,827 INFO: 
+>>> PROCESSING FORWARD ENTRIES (12 records)
+2026-02-13 14:39:18,827 INFO: ================================================================================
+2026-02-13 14:39:18,827 INFO: STEP 2b: Process Case II (Forward Entries)
+2026-02-13 14:39:18,827 INFO: ================================================================================
+2026-02-13 14:39:18,827 INFO: Processing forward entries
+2026-02-13 14:39:18,853 INFO: Loading latest summary for Affected Accounts
+2026-02-13 14:39:19,175 INFO: Write partitions [case_2_temp]: 50 (base=200, expected_rows=12, scale=1.0)
+2026-02-13 14:39:28,868 INFO: Case II Generated | Time Elapsed: 0.17 minutes
+2026-02-13 14:39:28,868 INFO: ------------------------------------------------------------
+2026-02-13 14:39:28,868 INFO: ------------------------------------------------------------
+2026-02-13 14:39:28,868 INFO: MERGING FORWARD RECORDS:
+2026-02-13 14:39:29,000 INFO: Write partitions [summary_merge_case_2]: 50 (base=200, expected_rows=12, scale=1.0)
+2026-02-13 14:39:31,024 INFO: Updated Summary | MERGED - CASE II (Forward Records) | Time Elapsed: 0.04 minutes
+2026-02-13 14:39:31,025 INFO: ------------------------------------------------------------
+2026-02-13 14:39:32,731 INFO: Updated latest_summary | MERGE - CASE II (Forward Records) | Time Elapsed: 0.03 minutes
+2026-02-13 14:39:32,732 INFO: ------------------------------------------------------------
+2026-02-13 14:39:32,732 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:39:34,894 INFO: Refreshed watermark tracker table: primary_catalog.main_aggressive_idempotency.summary_watermark_tracker (mark_committed=True)
+[CYCLE 2] Rerun #1 (idempotency check)
+2026-02-13 14:39:38,241 INFO: Cleaned case_1
+2026-02-13 14:39:38,283 INFO: Cleaned case_2
+2026-02-13 14:39:38,338 INFO: Cleaned case_3a
+2026-02-13 14:39:38,403 INFO: Cleaned case_3b
+2026-02-13 14:39:38,458 INFO: Cleaned case_4
+2026-02-13 14:39:38,458 INFO: CLEANUP COMPLETED
+2026-02-13 14:39:38,458 INFO: ============================================================
+2026-02-13 14:39:38,458 INFO: ================================================================================
+2026-02-13 14:39:38,458 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:39:38,459 INFO: ================================================================================
+2026-02-13 14:39:38,459 INFO: ================================================================================
+2026-02-13 14:39:38,459 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:39:38,459 INFO: ================================================================================
+2026-02-13 14:39:39,354 INFO: Using ingestion watermark (tracker) for source filter: base_ts > 2026-02-03 03:00:15
+2026-02-13 14:39:39,354 INFO: Loading accounts from primary_catalog.main_aggressive_idempotency.accounts_all
+2026-02-13 14:39:39,396 INFO: Reading from primary_catalog.main_aggressive_idempotency.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2026-02-03 03:00:15
+2026-02-13 14:39:39,396 INFO: Preparing source data...
+2026-02-13 14:39:39,628 INFO: Applied 36 column mappings
+2026-02-13 14:39:39,881 INFO: Applied 7 column transformations
+2026-02-13 14:39:39,924 INFO: Created 2 inferred columns
+2026-02-13 14:39:40,148 INFO: Validated 7 date columns
+2026-02-13 14:39:40,201 INFO: Source data preparation complete
+2026-02-13 14:39:40,215 INFO: Loading summary metadata from primary_catalog.main_aggressive_idempotency.latest_summary
+2026-02-13 14:39:40,222 INFO: Loaded metadata for existing accounts
+2026-02-13 14:39:40,222 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:39:40,919 INFO: ------------------------------------------------------------
+2026-02-13 14:39:40,919 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:39:40,919 INFO: ------------------------------------------------------------
+2026-02-13 14:39:40,919 INFO: Classification | Time Elapsed: 0.04 minutes
+2026-02-13 14:39:40,980 INFO: ------------------------------------------------------------
+2026-02-13 14:39:40,980 INFO: MERGING RECORDS:
+2026-02-13 14:39:40,988 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:39:40,988 INFO: ------------------------------------------------------------
+2026-02-13 14:39:40,994 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:39:40,994 INFO: ------------------------------------------------------------
+2026-02-13 14:39:40,994 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:39:41,004 INFO: No Case I/IV records to merge | Time Elapsed: 0.00 minutes
+2026-02-13 14:39:41,004 INFO: ------------------------------------------------------------
+2026-02-13 14:39:41,004 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:39:41,014 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:39:41,014 INFO: ------------------------------------------------------------
+2026-02-13 14:39:41,031 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:39:49,250 INFO: Refreshed watermark tracker table: primary_catalog.main_aggressive_idempotency.summary_watermark_tracker (mark_committed=True)
+[CYCLE 2] Rerun #2 (idempotency check)
+2026-02-13 14:39:53,926 INFO: Cleaned case_1
+2026-02-13 14:39:53,939 INFO: Cleaned case_2
+2026-02-13 14:39:53,954 INFO: Cleaned case_3a
+2026-02-13 14:39:53,971 INFO: Cleaned case_3b
+2026-02-13 14:39:53,983 INFO: Cleaned case_4
+2026-02-13 14:39:53,983 INFO: CLEANUP COMPLETED
+2026-02-13 14:39:53,983 INFO: ============================================================
+2026-02-13 14:39:53,983 INFO: ================================================================================
+2026-02-13 14:39:53,984 INFO: SUMMARY PIPELINE - START
+2026-02-13 14:39:53,984 INFO: ================================================================================
+2026-02-13 14:39:53,984 INFO: ================================================================================
+2026-02-13 14:39:53,984 INFO: STEP 1: Load and Classify Accounts
+2026-02-13 14:39:53,984 INFO: ================================================================================
+2026-02-13 14:39:54,899 INFO: Using ingestion watermark (tracker) for source filter: base_ts > 2026-02-03 03:00:15
+2026-02-13 14:39:54,899 INFO: Loading accounts from primary_catalog.main_aggressive_idempotency.accounts_all
+2026-02-13 14:39:54,924 INFO: Reading from primary_catalog.main_aggressive_idempotency.accounts_all - (rpt_as_of_mo < 2027-01) & (base_ts > 2026-02-03 03:00:15
+2026-02-13 14:39:54,924 INFO: Preparing source data...
+2026-02-13 14:39:55,048 INFO: Applied 36 column mappings
+2026-02-13 14:39:55,163 INFO: Applied 7 column transformations
+2026-02-13 14:39:55,212 INFO: Created 2 inferred columns
+2026-02-13 14:39:55,538 INFO: Validated 7 date columns
+2026-02-13 14:39:55,593 INFO: Source data preparation complete
+2026-02-13 14:39:55,607 INFO: Loading summary metadata from primary_catalog.main_aggressive_idempotency.latest_summary
+2026-02-13 14:39:55,616 INFO: Loaded metadata for existing accounts
+2026-02-13 14:39:55,617 INFO: Classifying accounts into Case I/II/III/IV
+2026-02-13 14:39:56,460 INFO: ------------------------------------------------------------
+2026-02-13 14:39:56,460 INFO: CLASSIFICATION RESULTS:
+2026-02-13 14:39:56,461 INFO: ------------------------------------------------------------
+2026-02-13 14:39:56,461 INFO: Classification | Time Elapsed: 0.04 minutes
+2026-02-13 14:39:56,513 INFO: ------------------------------------------------------------
+2026-02-13 14:39:56,513 INFO: MERGING RECORDS:
+2026-02-13 14:39:56,520 INFO: MERGED - CASE III-A (NEW summary rows for backfill months with inherited history)| Time Elapsed: 0.00 minutes
+2026-02-13 14:39:56,520 INFO: ------------------------------------------------------------
+2026-02-13 14:39:56,525 INFO: Updated Summary | MERGED - CASE III-B (future summary rows with backfill data) | Time Elapsed: 0.00 minutes
+2026-02-13 14:39:56,525 INFO: ------------------------------------------------------------
+2026-02-13 14:39:56,525 INFO: MERGING NEW/BULK RECORDS:
+2026-02-13 14:39:56,535 INFO: No Case I/IV records to merge | Time Elapsed: 0.00 minutes
+2026-02-13 14:39:56,535 INFO: ------------------------------------------------------------
+2026-02-13 14:39:56,535 INFO: UPDATING LATEST SUMMARY FROM CASE III:
+2026-02-13 14:39:56,545 INFO: No Case III candidates for latest_summary | Time Elapsed: 0.00 minutes
+2026-02-13 14:39:56,545 INFO: ------------------------------------------------------------
+2026-02-13 14:39:56,564 INFO: PROCESS COMPLETED - Deleting the persisted classification results
+2026-02-13 14:39:58,919 INFO: Refreshed watermark tracker table: primary_catalog.main_aggressive_idempotency.summary_watermark_tracker (mark_committed=True)
+[CYCLE 2] PASS
+[PASS] test_aggressive_idempotency
+2026-02-13 14:40:03,688 INFO: Closing down clientserver connection

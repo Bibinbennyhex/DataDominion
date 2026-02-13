@@ -11,6 +11,7 @@ from pyspark.sql import Window
 from pyspark.sql import functions as F
 
 from test_utils import (
+    assert_watermark_tracker_consistent,
     build_source_row,
     build_summary_row,
     create_spark_session,
@@ -130,6 +131,7 @@ def run_test():
         print("[RUN] Executing main pipeline...")
         main_pipeline.cleanup(spark)
         main_pipeline.run_pipeline(spark, config)
+        assert_watermark_tracker_consistent(spark, config)
 
         print("[ASSERT] Sanity-checking summary was updated by backfill...")
         jan_row = fetch_single_row(spark, config["destination_table"], 5001, "2026-01")
@@ -151,4 +153,3 @@ def run_test():
 
 if __name__ == "__main__":
     run_test()
-

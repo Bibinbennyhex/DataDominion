@@ -5,6 +5,7 @@ Focused regression test for Case III base_ts propagation in main/summary_inc.py.
 from datetime import datetime
 
 from test_utils import (
+    assert_watermark_tracker_consistent,
     build_source_row,
     build_summary_row,
     create_spark_session,
@@ -100,6 +101,7 @@ def run_test():
         print("[RUN] Executing main pipeline...")
         main_pipeline.cleanup(spark)
         main_pipeline.run_pipeline(spark, config)
+        assert_watermark_tracker_consistent(spark, config)
 
         print("[ASSERT] Validating base_ts propagation and array patch...")
         jan_row = fetch_single_row(spark, config["destination_table"], 5001, "2026-01")

@@ -10,6 +10,7 @@ from datetime import datetime
 from pyspark.sql import functions as F
 
 from test_utils import (
+    assert_watermark_tracker_consistent,
     build_source_row,
     build_summary_row,
     create_spark_session,
@@ -110,6 +111,7 @@ def run_test():
         print("[RUN] First pipeline execution...")
         main_pipeline.cleanup(spark)
         main_pipeline.run_pipeline(spark, config)
+        assert_watermark_tracker_consistent(spark, config)
 
         summary_count_1 = spark.table(config["destination_table"]).count()
         latest_count_1 = spark.table(config["latest_history_table"]).count()
@@ -120,6 +122,7 @@ def run_test():
         print("[RUN] Second pipeline execution with same source batch...")
         main_pipeline.cleanup(spark)
         main_pipeline.run_pipeline(spark, config)
+        assert_watermark_tracker_consistent(spark, config)
 
         summary_count_2 = spark.table(config["destination_table"]).count()
         latest_count_2 = spark.table(config["latest_history_table"]).count()
@@ -141,4 +144,3 @@ def run_test():
 
 if __name__ == "__main__":
     run_test()
-

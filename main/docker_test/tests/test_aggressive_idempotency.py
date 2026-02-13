@@ -24,6 +24,7 @@ from pyspark.sql import Window
 from pyspark.sql import functions as F
 
 from test_utils import (
+    assert_watermark_tracker_consistent,
     build_source_row,
     build_summary_row,
     create_spark_session,
@@ -290,6 +291,7 @@ def run_test(scale: str = "SMALL", cycles: int = 0, reruns: int = 1, seed: int =
             print(f"[CYCLE {cycle}] Run #1 (state-changing run)")
             main_pipeline.cleanup(spark)
             main_pipeline.run_pipeline(spark, config)
+            assert_watermark_tracker_consistent(spark, config)
 
             _assert_no_duplicates(spark, config["destination_table"], ["cons_acct_key", "rpt_as_of_mo"], "summary")
             _assert_no_duplicates(spark, config["latest_history_table"], ["cons_acct_key"], "latest_summary")
@@ -302,6 +304,7 @@ def run_test(scale: str = "SMALL", cycles: int = 0, reruns: int = 1, seed: int =
                 print(f"[CYCLE {cycle}] Rerun #{rerun_idx} (idempotency check)")
                 main_pipeline.cleanup(spark)
                 main_pipeline.run_pipeline(spark, config)
+                assert_watermark_tracker_consistent(spark, config)
 
                 _assert_no_duplicates(spark, config["destination_table"], ["cons_acct_key", "rpt_as_of_mo"], "summary")
                 _assert_no_duplicates(spark, config["latest_history_table"], ["cons_acct_key"], "latest_summary")
@@ -333,4 +336,3 @@ def _cli():
 
 if __name__ == "__main__":
     _cli()
-

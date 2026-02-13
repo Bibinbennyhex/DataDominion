@@ -252,13 +252,17 @@ def reset_tables(spark: SparkSession, config: Dict):
     source_table = config["source_table"]
     summary_table = config["destination_table"]
     latest_table = config["latest_history_table"]
+    tracker_table = (
+        config.get("watermark_tracker_table")
+        or main_pipeline.get_watermark_tracker_table(config)
+    )
 
     namespace = source_table.rsplit(".", 1)[0]
 
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {namespace}")
     spark.sql("CREATE NAMESPACE IF NOT EXISTS temp_catalog.checkpointdb")
 
-    for table in [source_table, summary_table, latest_table]:
+    for table in [source_table, summary_table, latest_table, tracker_table]:
         spark.sql(f"DROP TABLE IF EXISTS {table}")
 
     for temp_case in ["case_1", "case_2", "case_3a", "case_3b", "case_4"]:
@@ -483,6 +487,81 @@ def fetch_single_row(spark: SparkSession, table: str, cons_acct_key: int, rpt_as
     return rows[0]
 
 
+def _safe_min_datetime(a: Optional[datetime], b: Optional[datetime]) -> Optional[datetime]:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a if a <= b else b
+
+
+def _safe_min_month(a: Optional[str], b: Optional[str]) -> Optional[str]:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a if a <= b else b
+
+
+def assert_watermark_tracker_consistent(spark: SparkSession, config: Dict):
+    tracker_table = (
+        config.get("watermark_tracker_table")
+        or main_pipeline.get_watermark_tracker_table(config)
+    )
+    if not spark.catalog.tableExists(tracker_table):
+        raise AssertionError(f"Watermark tracker table not found: {tracker_table}")
+
+    summary_table = config["destination_table"]
+    latest_table = config["latest_history_table"]
+    ts = config["max_identifier_column"]
+    prt = config["partition_column"]
+
+    summary_stats = (
+        spark.table(summary_table)
+        .agg(F.max(F.col(ts)).alias("max_base_ts"), F.max(F.col(prt)).alias("max_rpt_as_of_mo"))
+        .first()
+    )
+    latest_stats = (
+        spark.table(latest_table)
+        .agg(F.max(F.col(ts)).alias("max_base_ts"), F.max(F.col(prt)).alias("max_rpt_as_of_mo"))
+        .first()
+    )
+
+    tracker_rows = (
+        spark.table(tracker_table)
+        .select("source_name", "max_base_ts", "max_rpt_as_of_mo")
+        .collect()
+    )
+    tracker_map = {
+        row["source_name"]: (row["max_base_ts"], row["max_rpt_as_of_mo"])
+        for row in tracker_rows
+    }
+
+    expected_summary = (summary_stats["max_base_ts"], summary_stats["max_rpt_as_of_mo"])
+    expected_latest = (latest_stats["max_base_ts"], latest_stats["max_rpt_as_of_mo"])
+    expected_committed = (
+        _safe_min_datetime(summary_stats["max_base_ts"], latest_stats["max_base_ts"]),
+        _safe_min_month(summary_stats["max_rpt_as_of_mo"], latest_stats["max_rpt_as_of_mo"]),
+    )
+
+    actual_summary = tracker_map.get(main_pipeline.TRACKER_SOURCE_SUMMARY)
+    actual_latest = tracker_map.get(main_pipeline.TRACKER_SOURCE_LATEST_SUMMARY)
+    actual_committed = tracker_map.get(main_pipeline.TRACKER_SOURCE_COMMITTED)
+
+    if actual_summary != expected_summary:
+        raise AssertionError(
+            f"Summary tracker mismatch: expected={expected_summary}, actual={actual_summary}"
+        )
+    if actual_latest != expected_latest:
+        raise AssertionError(
+            f"Latest tracker mismatch: expected={expected_latest}, actual={actual_latest}"
+        )
+    if actual_committed != expected_committed:
+        raise AssertionError(
+            f"Committed tracker mismatch: expected={expected_committed}, actual={actual_committed}"
+        )
+
+
 __all__ = [
     "create_spark_session",
     "load_main_test_config",
@@ -493,5 +572,6 @@ __all__ = [
     "write_source_rows",
     "write_summary_rows",
     "fetch_single_row",
+    "assert_watermark_tracker_consistent",
     "main_pipeline",
 ]

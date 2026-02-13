@@ -5,6 +5,7 @@ Integration test for main/summary_inc.py using all four case types.
 from datetime import datetime
 
 from test_utils import (
+    assert_watermark_tracker_consistent,
     build_source_row,
     build_summary_row,
     create_spark_session,
@@ -117,6 +118,7 @@ def run_test():
         print("[RUN] Executing main pipeline...")
         main_pipeline.cleanup(spark)
         main_pipeline.run_pipeline(spark, config)
+        assert_watermark_tracker_consistent(spark, config)
 
         print("[ASSERT] Validating outputs...")
 

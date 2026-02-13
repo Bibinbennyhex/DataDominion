@@ -1,0 +1,178 @@
+[
+  {
+    "test": "simple_test.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 12.34,
+    "started_at": "2026-02-13T19:37:42",
+    "ended_at": "2026-02-13T19:37:54"
+  },
+  {
+    "test": "test_main_all_cases.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 108.7,
+    "started_at": "2026-02-13T19:37:54",
+    "ended_at": "2026-02-13T19:39:43"
+  },
+  {
+    "test": "test_main_base_ts_propagation.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 66.57,
+    "started_at": "2026-02-13T19:39:43",
+    "ended_at": "2026-02-13T19:40:50"
+  },
+  {
+    "test": "run_backfill_test.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 68.24,
+    "started_at": "2026-02-13T19:40:50",
+    "ended_at": "2026-02-13T19:41:58"
+  },
+  {
+    "test": "test_all_scenarios.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 106.76,
+    "started_at": "2026-02-13T19:41:58",
+    "ended_at": "2026-02-13T19:43:45"
+  },
+  {
+    "test": "test_all_scenarios_v942.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 113.44,
+    "started_at": "2026-02-13T19:43:45",
+    "ended_at": "2026-02-13T19:45:38"
+  },
+  {
+    "test": "test_bulk_historical_load.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 76.09,
+    "started_at": "2026-02-13T19:45:38",
+    "ended_at": "2026-02-13T19:46:54"
+  },
+  {
+    "test": "test_complex_scenarios.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 110.92,
+    "started_at": "2026-02-13T19:46:54",
+    "ended_at": "2026-02-13T19:48:45"
+  },
+  {
+    "test": "test_comprehensive_50_cases.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 88.82,
+    "started_at": "2026-02-13T19:48:45",
+    "ended_at": "2026-02-13T19:50:14"
+  },
+  {
+    "test": "test_comprehensive_edge_cases.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 120.39,
+    "started_at": "2026-02-13T19:50:14",
+    "ended_at": "2026-02-13T19:52:14"
+  },
+  {
+    "test": "test_consecutive_backfill.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 70.56,
+    "started_at": "2026-02-13T19:52:14",
+    "ended_at": "2026-02-13T19:53:25"
+  },
+  {
+    "test": "test_duplicate_records.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 47.42,
+    "started_at": "2026-02-13T19:53:25",
+    "ended_at": "2026-02-13T19:54:12"
+  },
+  {
+    "test": "test_full_46_columns.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 48.63,
+    "started_at": "2026-02-13T19:54:12",
+    "ended_at": "2026-02-13T19:55:01"
+  },
+  {
+    "test": "test_long_backfill_gaps.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 69.12,
+    "started_at": "2026-02-13T19:55:01",
+    "ended_at": "2026-02-13T19:56:10"
+  },
+  {
+    "test": "test_non_continuous_backfill.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 70.96,
+    "started_at": "2026-02-13T19:56:10",
+    "ended_at": "2026-02-13T19:57:21"
+  },
+  {
+    "test": "test_null_update_case_iii.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 69.78,
+    "started_at": "2026-02-13T19:57:21",
+    "ended_at": "2026-02-13T19:58:31"
+  },
+  {
+    "test": "test_null_update_other_cases.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 77.44,
+    "started_at": "2026-02-13T19:58:31",
+    "ended_at": "2026-02-13T19:59:48"
+  },
+  {
+    "test": "test_null_update.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 68.62,
+    "started_at": "2026-02-13T19:59:48",
+    "ended_at": "2026-02-13T20:00:57"
+  },
+  {
+    "test": "test_idempotency.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 110.82,
+    "started_at": "2026-02-13T20:00:57",
+    "ended_at": "2026-02-13T20:02:48"
+  },
+  {
+    "test": "test_latest_summary_consistency.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 95.4,
+    "started_at": "2026-02-13T20:02:48",
+    "ended_at": "2026-02-13T20:04:23"
+  },
+  {
+    "test": "test_recovery.py",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 101.3,
+    "started_at": "2026-02-13T20:04:23",
+    "ended_at": "2026-02-13T20:06:04"
+  },
+  {
+    "test": "test_aggressive_idempotency.py --scale TINY --cycles 2 --reruns 2",
+    "status": "PASS",
+    "exit_code": 0,
+    "duration_sec": 238.6,
+    "started_at": "2026-02-13T20:06:04",
+    "ended_at": "2026-02-13T20:10:03"
+  }
+]

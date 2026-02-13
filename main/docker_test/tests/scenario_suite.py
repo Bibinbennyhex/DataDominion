@@ -14,6 +14,7 @@ from typing import List
 from pyspark.sql import functions as F
 
 from test_utils import (
+    assert_watermark_tracker_consistent,
     build_source_row,
     build_summary_row,
     create_spark_session,
@@ -97,6 +98,7 @@ def _initialize(namespace: str, app_name: str):
 def _run_pipeline(spark, config):
     main_pipeline.cleanup(spark)
     main_pipeline.run_pipeline(spark, config)
+    assert_watermark_tracker_consistent(spark, config)
 
 
 def run_simple_test():
@@ -435,4 +437,3 @@ def cli_performance():
     parser.add_argument("--scale", default="TINY", choices=list(PERF_SCALES.keys()))
     args = parser.parse_args()
     run_performance_benchmark(args.scale)
-
