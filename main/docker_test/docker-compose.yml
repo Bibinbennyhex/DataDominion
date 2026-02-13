@@ -87,6 +87,8 @@ services:
       - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
+      - AIRFLOW__WEBSERVER__WEB_SERVER_HOST=0.0.0.0
+      - AIRFLOW__WEBSERVER__WEB_SERVER_PORT=8080
       - SPARK_CONTAINER_NAME=spark-iceberg-main
     volumes:
       - ./airflow/dags:/opt/airflow/dags
@@ -95,7 +97,12 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8085:8080"
-    command: standalone
+    command: >
+      bash -lc "
+      export PATH=\"/home/airflow/.local/bin:$$PATH\";
+      rm -f /opt/airflow/airflow-webserver.pid /opt/airflow/airflow-scheduler.pid;
+      exec airflow standalone
+      "
 
 networks:
   iceberg_net_main:
