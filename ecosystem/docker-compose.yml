@@ -1,0 +1,560 @@
+services:
+  spark-iceberg-main:
+    image: tabulario/spark-iceberg
+    container_name: spark-iceberg-main
+    depends_on:
+      - rest
+      - minio
+    networks:
+      - iceberg_net_main
+    volumes:
+      - ../main/docker_test/warehouse:/home/iceberg/warehouse
+      - ../main/docker_test/data:/home/iceberg/data
+      - ../main/docker_test/notebooks:/home/iceberg/notebooks/notebooks
+      - ../:/workspace
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+    ports:
+      - "8890:8888"
+      - "8081:8080"
+      - "4045-4047:4040-4042"
+
+  rest:
+    image: tabulario/iceberg-rest
+    container_name: iceberg-rest-main
+    networks:
+      - iceberg_net_main
+    ports:
+      - "8182:8181"
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+      - CATALOG_WAREHOUSE=s3://warehouse/
+      - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      - CATALOG_S3_ENDPOINT=http://minio:9000
+
+  minio:
+    image: minio/minio
+    container_name: minio-main
+    networks:
+      iceberg_net_main:
+        aliases:
+          - warehouse.minio
+    environment:
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password
+      - MINIO_DOMAIN=minio
+    ports:
+      - "9002:9000"
+      - "9003:9001"
+    command: ["server", "/data", "--console-address", ":9001"]
+
+  mc:
+    image: minio/mc
+    container_name: mc-main
+    depends_on:
+      - minio
+    networks:
+      - iceberg_net_main
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+    entrypoint: >
+      /bin/sh -c "
+      until (/usr/bin/mc alias set minio http://minio:9000/ admin password) do echo '...waiting...' && sleep 1; done;
+      /usr/bin/mc mb minio/warehouse || echo 'Warehouse already exists';
+      /usr/bin/mc policy set public minio/warehouse;
+      tail -f /dev/null
+      "
+
+  airflow:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    image: local/airflow-main:2.10.2
+    container_name: airflow-main
+    depends_on:
+      - spark-iceberg-main
+    networks:
+      - iceberg_net_main
+    user: "0:0"
+    environment:
+      - AIRFLOW_HOME=/opt/airflow
+      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=False
+      - AIRFLOW__WEBSERVER__WEB_SERVER_HOST=0.0.0.0
+      - AIRFLOW__WEBSERVER__WEB_SERVER_PORT=8080
+      - SPARK_CONTAINER_NAME=spark-iceberg-main
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ../:/workspace
+      - airflow_home:/opt/airflow
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8085:8080"
+    command: >
+      bash -lc "
+      export PATH=\"/home/airflow/.local/bin:$$PATH\";
+      rm -f /opt/airflow/airflow-webserver.pid /opt/airflow/airflow-scheduler.pid;
+      exec airflow standalone
+      "
+
+  jupyter-main:
+    image: jupyter/pyspark-notebook:latest
+    container_name: jupyter-main
+    profiles:
+      - notebook
+    depends_on:
+      - rest
+      - minio
+    networks:
+      - iceberg_net_main
+    environment:
+      - JUPYTER_TOKEN=main-notebook
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+      - PYSPARK_SUBMIT_ARGS=--packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,org.apache.hadoop:hadoop-aws:3.3.4 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.catalog.main=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.main.type=rest --conf spark.sql.catalog.main.uri=http://rest:8181 --conf spark.sql.catalog.main.warehouse=s3://warehouse --conf spark.sql.catalog.main.io-impl=org.apache.iceberg.aws.s3.S3FileIO --conf spark.sql.catalog.main.s3.endpoint=http://minio:9000 --conf spark.hadoop.fs.s3a.access.key=admin --conf spark.hadoop.fs.s3a.secret.key=password --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 --conf spark.hadoop.fs.s3a.path.style.access=true pyspark-shell
+    volumes:
+      - ../main/docker_test/notebooks:/home/jovyan/work
+      - ../:/workspace
+    ports:
+      - "8891:8888"
+
+  cadvisor-main:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor-main
+    profiles:
+      - observability
+    networks:
+      - iceberg_net_main
+    ports:
+      - "8088:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+
+  prometheus-main:
+    image: prom/prometheus:latest
+    container_name: prometheus-main
+    profiles:
+      - observability
+    depends_on:
+      - cadvisor-main
+    networks:
+      - iceberg_net_main
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9091:9090"
+
+  grafana-main:
+    image: grafana/grafana:latest
+    container_name: grafana-main
+    profiles:
+      - observability
+    depends_on:
+      - prometheus-main
+    networks:
+      - iceberg_net_main
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+
+  ranger-db:
+    image: apache/ranger-db:2.4.0
+    container_name: ranger-db
+    profiles:
+      - governance
+    platform: linux/arm64
+    networks:
+      - iceberg_net_main
+    environment:
+      - POSTGRES_PASSWORD=rangerR0cks!
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - ranger_db_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+
+  ranger-zk:
+    image: apache/ranger-zk:2.4.0
+    container_name: ranger-zk
+    profiles:
+      - governance
+    platform: linux/arm64
+    networks:
+      - iceberg_net_main
+    ports:
+      - "22181:2181"
+
+  ranger-solr:
+    image: apache/ranger-solr:2.4.0
+    container_name: ranger-solr
+    profiles:
+      - governance
+    platform: linux/arm64
+    depends_on:
+      - ranger-zk
+    networks:
+      - iceberg_net_main
+    command:
+      - solr-precreate
+      - ranger_audits
+      - /opt/solr/server/solr/configsets/ranger_audits/
+    volumes:
+      - ranger_solr_data:/var/solr
+    ports:
+      - "8984:8983"
+
+  ranger-admin:
+    image: apache/ranger:2.4.0
+    container_name: ranger-admin
+    profiles:
+      - governance
+    platform: linux/arm64
+    depends_on:
+      ranger-db:
+        condition: service_healthy
+      ranger-solr:
+        condition: service_started
+      ranger-zk:
+        condition: service_started
+    networks:
+      iceberg_net_main:
+        aliases:
+          - ranger
+    ports:
+      - "6080:6080"
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.9.2
+    container_name: datahub-zookeeper-main
+    profiles:
+      - lineage
+    networks:
+      - iceberg_net_main
+    environment:
+      - ZOOKEEPER_CLIENT_PORT=2181
+      - ZOOKEEPER_TICK_TIME=2000
+    healthcheck:
+      test: echo srvr | nc zookeeper 2181
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    volumes:
+      - dh_zk_data:/var/lib/zookeeper/data
+      - dh_zk_logs:/var/lib/zookeeper/log
+    ports:
+      - "2182:2181"
+
+  broker:
+    image: confluentinc/cp-kafka:7.9.2
+    container_name: datahub-broker-main
+    profiles:
+      - lineage
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    networks:
+      - iceberg_net_main
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9094
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0
+      - KAFKA_HEAP_OPTS=-Xms512m -Xmx512m
+      - KAFKA_CONFLUENT_SUPPORT_METRICS_ENABLE=false
+      - KAFKA_MESSAGE_MAX_BYTES=5242880
+      - KAFKA_MAX_MESSAGE_BYTES=5242880
+    healthcheck:
+      test: nc -z broker 29092
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    volumes:
+      - dh_broker_data:/var/lib/kafka/data/
+    ports:
+      - "9094:9092"
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.9.2
+    container_name: datahub-schema-registry-main
+    profiles:
+      - lineage
+    depends_on:
+      broker:
+        condition: service_healthy
+    networks:
+      - iceberg_net_main
+    environment:
+      - SCHEMA_REGISTRY_HOST_NAME=schemaregistry
+      - SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL=PLAINTEXT
+      - SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS=broker:29092
+    healthcheck:
+      test: nc -z schema-registry 8081
+      interval: 1s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    ports:
+      - "8087:8081"
+
+  mysql:
+    image: mysql:8.2
+    container_name: datahub-mysql-main
+    profiles:
+      - lineage
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_bin --default-authentication-plugin=mysql_native_password
+    networks:
+      - iceberg_net_main
+    environment:
+      - MYSQL_DATABASE=datahub
+      - MYSQL_USER=datahub
+      - MYSQL_PASSWORD=datahub
+      - MYSQL_ROOT_PASSWORD=datahub
+      - MYSQL_ROOT_HOST=%
+    healthcheck:
+      test: mysqladmin ping -h mysql -u $$MYSQL_USER --password=$$MYSQL_PASSWORD
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: on-failure
+    volumes:
+      - dh_mysql_data:/var/lib/mysql
+    ports:
+      - "3307:3306"
+
+  mysql-setup:
+    image: acryldata/datahub-mysql-setup:v1.0.0
+    container_name: datahub-mysql-setup-main
+    profiles:
+      - lineage
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - iceberg_net_main
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USERNAME=datahub
+      - MYSQL_PASSWORD=datahub
+      - DATAHUB_DB_NAME=datahub
+      - MYSQL_ROOT_PASSWORD=datahub
+      - CDC_MCL_PROCESSING_ENABLED=false
+      - CDC_USER=datahub_cdc
+      - CDC_PASSWORD=datahub_cdc
+
+  elasticsearch:
+    image: elasticsearch:7.10.1
+    container_name: datahub-elasticsearch-main
+    profiles:
+      - lineage
+    networks:
+      - iceberg_net_main
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms256m -Xmx512m -Dlog4j2.formatMsgNoLookups=true
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    healthcheck:
+      test: curl -sS --fail http://elasticsearch:9200/_cluster/health?wait_for_status=yellow&timeout=0s
+      interval: 1s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    volumes:
+      - dh_es_data:/usr/share/elasticsearch/data
+    ports:
+      - "9201:9200"
+
+  elasticsearch-setup:
+    image: acryldata/datahub-elasticsearch-setup:v1.0.0
+    container_name: datahub-elasticsearch-setup-main
+    profiles:
+      - lineage
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - iceberg_net_main
+    environment:
+      - ELASTICSEARCH_USE_SSL=false
+      - USE_AWS_ELASTICSEARCH=false
+      - ELASTICSEARCH_HOST=elasticsearch
+      - ELASTICSEARCH_PORT=9200
+      - ELASTICSEARCH_PROTOCOL=http
+
+  kafka-setup:
+    image: acryldata/datahub-kafka-setup:v1.0.0
+    container_name: datahub-kafka-setup-main
+    profiles:
+      - lineage
+    depends_on:
+      broker:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    networks:
+      - iceberg_net_main
+    environment:
+      - DATAHUB_PRECREATE_TOPICS=false
+
+  datahub-upgrade:
+    image: acryldata/datahub-upgrade:v1.0.0
+    container_name: datahub-upgrade-main
+    profiles:
+      - lineage
+    command:
+      - -u
+      - SystemUpdate
+    depends_on:
+      elasticsearch-setup:
+        condition: service_completed_successfully
+      kafka-setup:
+        condition: service_completed_successfully
+      mysql-setup:
+        condition: service_completed_successfully
+    networks:
+      - iceberg_net_main
+    environment:
+      - EBEAN_DATASOURCE_USERNAME=datahub
+      - EBEAN_DATASOURCE_PASSWORD=datahub
+      - EBEAN_DATASOURCE_HOST=mysql:3306
+      - EBEAN_DATASOURCE_URL=jdbc:mysql://mysql:3306/datahub?verifyServerCertificate=false&useSSL=true&useUnicode=yes&characterEncoding=UTF-8
+      - EBEAN_DATASOURCE_DRIVER=com.mysql.jdbc.Driver
+      - KAFKA_BOOTSTRAP_SERVER=broker:29092
+      - KAFKA_SCHEMAREGISTRY_URL=http://schema-registry:8081
+      - ELASTICSEARCH_HOST=elasticsearch
+      - ELASTICSEARCH_PORT=9200
+      - ELASTICSEARCH_INDEX_BUILDER_MAPPINGS_REINDEX=true
+      - ELASTICSEARCH_INDEX_BUILDER_SETTINGS_REINDEX=true
+      - ELASTICSEARCH_BUILD_INDICES_CLONE_INDICES=false
+      - GRAPH_SERVICE_IMPL=elasticsearch
+      - DATAHUB_GMS_HOST=datahub-gms
+      - DATAHUB_GMS_PORT=8080
+      - ENTITY_REGISTRY_CONFIG_PATH=/datahub/datahub-gms/resources/entity-registry.yml
+      - BACKFILL_BROWSE_PATHS_V2=true
+      - REPROCESS_DEFAULT_BROWSE_PATHS_V2=false
+
+  datahub-gms:
+    image: acryldata/datahub-gms:v1.0.0
+    container_name: datahub-gms-main
+    profiles:
+      - lineage
+    depends_on:
+      datahub-upgrade:
+        condition: service_completed_successfully
+    networks:
+      - iceberg_net_main
+    environment:
+      - DATAHUB_SERVER_TYPE=quickstart
+      - DATAHUB_TELEMETRY_ENABLED=false
+      - DATAHUB_UPGRADE_HISTORY_KAFKA_CONSUMER_GROUP_ID=generic-duhe-consumer-job-client-gms
+      - EBEAN_DATASOURCE_DRIVER=com.mysql.jdbc.Driver
+      - EBEAN_DATASOURCE_HOST=mysql:3306
+      - EBEAN_DATASOURCE_PASSWORD=datahub
+      - EBEAN_DATASOURCE_URL=jdbc:mysql://mysql:3306/datahub?verifyServerCertificate=false&useSSL=true&useUnicode=yes&characterEncoding=UTF-8
+      - EBEAN_DATASOURCE_USERNAME=datahub
+      - ELASTICSEARCH_HOST=elasticsearch
+      - ELASTICSEARCH_INDEX_BUILDER_MAPPINGS_REINDEX=true
+      - ELASTICSEARCH_INDEX_BUILDER_SETTINGS_REINDEX=true
+      - ELASTICSEARCH_PORT=9200
+      - ENTITY_REGISTRY_CONFIG_PATH=/datahub/datahub-gms/resources/entity-registry.yml
+      - ENTITY_SERVICE_ENABLE_RETENTION=true
+      - ES_BULK_REFRESH_POLICY=WAIT_UNTIL
+      - GRAPH_SERVICE_DIFF_MODE_ENABLED=true
+      - GRAPH_SERVICE_IMPL=elasticsearch
+      - JAVA_OPTS=-Xms1g -Xmx1g
+      - KAFKA_BOOTSTRAP_SERVER=broker:29092
+      - KAFKA_CONSUMER_STOP_ON_DESERIALIZATION_ERROR=true
+      - KAFKA_SCHEMAREGISTRY_URL=http://schema-registry:8081
+      - MAE_CONSUMER_ENABLED=true
+      - MCE_CONSUMER_ENABLED=true
+      - METADATA_SERVICE_AUTH_ENABLED=false
+      - PE_CONSUMER_ENABLED=true
+      - THEME_V2_DEFAULT=true
+      - UI_INGESTION_ENABLED=true
+    healthcheck:
+      test: curl -sS --fail http://datahub-gms:8080/health
+      interval: 1s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    ports:
+      - "8086:8080"
+
+  datahub-frontend-react:
+    image: acryldata/datahub-frontend-react:v1.0.0
+    container_name: datahub-frontend-main
+    profiles:
+      - lineage
+    depends_on:
+      datahub-gms:
+        condition: service_healthy
+    networks:
+      - iceberg_net_main
+    environment:
+      - DATAHUB_GMS_HOST=datahub-gms
+      - DATAHUB_GMS_PORT=8080
+      - DATAHUB_SECRET=YouKnowNothing
+      - DATAHUB_APP_VERSION=v1.0.0
+      - DATAHUB_PLAY_MEM_BUFFER_SIZE=10MB
+      - JAVA_OPTS=-Xms512m -Xmx512m -Dhttp.port=9002 -Dconfig.file=datahub-frontend/conf/application.conf -Djava.security.auth.login.config=datahub-frontend/conf/jaas.conf -Dlogback.configurationFile=datahub-frontend/conf/logback.xml -Dlogback.debug=false -Dpidfile.path=/dev/null
+      - KAFKA_BOOTSTRAP_SERVER=broker:29092
+      - DATAHUB_TRACKING_TOPIC=DataHubUsageEvent_v1
+      - ELASTIC_CLIENT_HOST=elasticsearch
+      - ELASTIC_CLIENT_PORT=9200
+    ports:
+      - "9005:9002"
+
+networks:
+  iceberg_net_main:
+
+volumes:
+  airflow_home:
+  prometheus_data:
+  grafana_data:
+  ranger_db_data:
+  ranger_solr_data:
+  dh_broker_data:
+  dh_es_data:
+  dh_mysql_data:
+  dh_zk_data:
+  dh_zk_logs:
