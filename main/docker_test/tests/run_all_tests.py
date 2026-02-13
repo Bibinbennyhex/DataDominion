@@ -43,6 +43,8 @@ def main():
         "test_null_update_case_iii.py",
         "test_null_update_other_cases.py",
         "test_null_update.py",
+        "test_idempotency.py",
+        "test_latest_summary_consistency.py",
         "test_recovery.py",
     ]
 
