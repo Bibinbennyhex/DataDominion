@@ -8,6 +8,7 @@ the same runtime stack (Spark + Iceberg + MinIO) used by local docker runs.
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 
 from airflow import DAG
@@ -17,6 +18,20 @@ from airflow.operators.python import PythonOperator
 
 SPARK_CONTAINER_ENV = "SPARK_CONTAINER_NAME"
 DEFAULT_SPARK_CONTAINER = "spark-iceberg-main"
+SUMMARY_LOG_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} (INFO|WARNING|ERROR|DEBUG):")
+SPARK_TASK_LOG_FILTER_ENV = "SPARK_TASK_LOG_FILTER"
+
+
+def _should_emit_line(line: str) -> bool:
+    mode = os.environ.get(SPARK_TASK_LOG_FILTER_ENV, "summary_only").strip().lower()
+    if mode in {"off", "all", "none"}:
+        return True
+    if SUMMARY_LOG_RE.match(line):
+        return True
+    # Keep critical Python/runtime errors visible.
+    if line.startswith("Traceback") or "AssertionError" in line or "Exception" in line:
+        return True
+    return False
 
 
 def run_in_spark(command: str, **_: object) -> None:
@@ -35,10 +50,17 @@ def run_in_spark(command: str, **_: object) -> None:
             stderr=True,
         )["Id"]
 
+        pending = ""
         for chunk in client.api.exec_start(exec_id, stream=True, demux=False):
             if not chunk:
                 continue
-            print(chunk.decode("utf-8", errors="replace"), end="")
+            pending += chunk.decode("utf-8", errors="replace")
+            while "\n" in pending:
+                line, pending = pending.split("\n", 1)
+                if _should_emit_line(line):
+                    print(line)
+        if pending and _should_emit_line(pending):
+            print(pending)
 
         exec_result = client.api.exec_inspect(exec_id)
         exit_code = int(exec_result.get("ExitCode", 1))
