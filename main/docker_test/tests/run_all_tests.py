@@ -33,6 +33,7 @@ def main():
         "test_all_scenarios_v942.py",
         "test_bulk_historical_load.py",
         "test_complex_scenarios.py",
+        "test_case3_current_max_month.py",
         "test_comprehensive_50_cases.py",
         "test_comprehensive_edge_cases.py",
         "test_consecutive_backfill.py",

@@ -338,6 +338,53 @@ def get_write_partitions(
     return parts
 
 
+def build_balanced_month_chunks(
+    month_weights: List[Tuple[str, float]],
+    overflow_ratio: float = 0.10,
+) -> List[List[str]]:
+    """
+    Build balanced month chunks using a greedy bin-packing strategy.
+
+    Args:
+        month_weights: list of (rpt_as_of_mo, weighted_load)
+        overflow_ratio: allowed overflow over the target chunk load.
+
+    Returns:
+        List of month lists, each list representing one merge chunk.
+    """
+    if not month_weights:
+        return []
+
+    # Largest month is used as baseline target load.
+    sorted_weights = sorted(
+        [(m, float(w)) for m, w in month_weights if m is not None and w is not None and w > 0],
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    if not sorted_weights:
+        return []
+
+    target = sorted_weights[0][1]
+    allowed = target * (1.0 + max(0.0, overflow_ratio))
+
+    bins: List[Dict[str, Any]] = []
+    for month, weight in sorted_weights:
+        if not bins:
+            bins.append({"load": weight, "months": [month]})
+            continue
+
+        # Place next month into the lightest chunk when possible.
+        lightest_idx = min(range(len(bins)), key=lambda i: bins[i]["load"])
+        if bins[lightest_idx]["load"] + weight <= allowed:
+            bins[lightest_idx]["load"] += weight
+            bins[lightest_idx]["months"].append(month)
+        else:
+            bins.append({"load": weight, "months": [month]})
+
+    chunks = [sorted(b["months"]) for b in bins if b["months"]]
+    return chunks
+
+
 def prepare_source_data(df, config: Dict[str, Any]):
     """
     Prepare source data with:
@@ -1443,19 +1490,96 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
         logger.info("MERGING RECORDS:")
         process_start_time = time.time()
 
+        case_3a_df = None
+        case_3b_filtered_df = None
+        month_chunks: List[List[str]] = []
+
         if spark.catalog.tableExists("temp_catalog.checkpointdb.case_3a"):
             case_3a_df = spark.read.table('temp_catalog.checkpointdb.case_3a')
-            case_3a_df.createOrReplaceTempView("case_3a")
 
-            spark.sql(
-                f"""           
-                    MERGE INTO {summary_table} s
-                    USING case_3a c
-                    ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
-                    WHEN MATCHED THEN UPDATE SET *
-                    WHEN NOT MATCHED THEN INSERT *
-                """
+        if spark.catalog.tableExists("temp_catalog.checkpointdb.case_3b"):
+            case_3b_df = spark.read.table('temp_catalog.checkpointdb.case_3b')
+            if case_3a_df is not None:
+                case_3b_filtered_df = case_3b_df.join(case_3a_df.select(pk, prt), [pk, prt], "left_anti")
+            else:
+                case_3b_filtered_df = case_3b_df
+
+        if case_3a_df is not None or case_3b_filtered_df is not None:
+            case3b_weight = float(config.get("case3_merge_case3b_weight", 1.3))
+            overflow_ratio = float(config.get("case3_merge_overflow_ratio", 0.10))
+            logger.info(
+                f"Case III merge chunking enabled "
+                f"(case3b_weight={case3b_weight}, overflow_ratio={overflow_ratio})"
             )
+
+            month_load_df = None
+            if case_3a_df is not None:
+                month_load_df = (
+                    case_3a_df.groupBy(prt)
+                    .count()
+                    .withColumnRenamed("count", "case3a_count")
+                )
+
+            if case_3b_filtered_df is not None:
+                case_3b_month_load = (
+                    case_3b_filtered_df.groupBy(prt)
+                    .count()
+                    .withColumnRenamed("count", "case3b_count")
+                )
+                if month_load_df is None:
+                    month_load_df = case_3b_month_load.withColumn("case3a_count", F.lit(0))
+                else:
+                    month_load_df = month_load_df.join(case_3b_month_load, prt, "full_outer")
+
+            month_load_df = (
+                month_load_df
+                .na.fill(0, ["case3a_count", "case3b_count"])
+                .withColumn(
+                    "weighted_load",
+                    F.col("case3a_count") + (F.lit(case3b_weight) * F.col("case3b_count")),
+                )
+            )
+
+            month_weights = [
+                (r[prt], float(r["weighted_load"]))
+                for r in month_load_df.select(prt, "weighted_load").collect()
+                if r[prt] is not None
+            ]
+
+            month_chunks = build_balanced_month_chunks(month_weights, overflow_ratio=overflow_ratio)
+
+            if month_chunks:
+                logger.info(f"Case III merge month chunks: {len(month_chunks)}")
+                for idx, months in enumerate(month_chunks, 1):
+                    logger.info(f"  Chunk {idx}: months={months}")
+
+        if case_3a_df is not None:
+            if not month_chunks:
+                month_chunks = [[r[prt]] for r in case_3a_df.select(prt).distinct().orderBy(prt).collect()]
+            case_3a_month_set = {
+                r[prt] for r in case_3a_df.select(prt).distinct().collect() if r[prt] is not None
+            }
+
+            for idx, months in enumerate(month_chunks, 1):
+                case_3a_chunk_months = [m for m in months if m in case_3a_month_set]
+                if not case_3a_chunk_months:
+                    continue
+
+                case_3a_chunk_df = case_3a_df.filter(F.col(prt).isin(case_3a_chunk_months))
+                case_3a_chunk_df.createOrReplaceTempView("case_3a_chunk")
+                spark.sql(
+                    f"""
+                        MERGE INTO {summary_table} s
+                        USING case_3a_chunk c
+                        ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
+                        WHEN MATCHED THEN UPDATE SET *
+                        WHEN NOT MATCHED THEN INSERT *
+                    """
+                )
+                logger.info(
+                    f"MERGED - CASE III-A chunk {idx}/{len(month_chunks)} "
+                    f"(months={case_3a_chunk_months})"
+                )
         
         process_end_time = time.time()
         process_total_minutes = (process_end_time - process_start_time) / 60
@@ -1464,17 +1588,7 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
 
         process_start_time = time.time()
 
-        if spark.catalog.tableExists("temp_catalog.checkpointdb.case_3b"):
-            case_3b_df = spark.read.table('temp_catalog.checkpointdb.case_3b')
-
-            if spark.catalog.tableExists("temp_catalog.checkpointdb.case_3a"):
-                case_3a_df = spark.read.table('temp_catalog.checkpointdb.case_3a').select(pk, prt)
-                case_3b_filtered_df = case_3b_df.join(case_3a_df, [pk, prt], "left_anti")
-            else:
-                case_3b_filtered_df = case_3b_df
-
-            case_3b_filtered_df.createOrReplaceTempView("case_3b")
-
+        if case_3b_filtered_df is not None:
             update_cols = list(dict.fromkeys([ts] + history_cols + grid_cols))
 
             update_set_exprs = []
@@ -1484,14 +1598,31 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
                 else:
                     update_set_exprs.append(f"s.{col_name} = c.{col_name}")
 
-            spark.sql(
-                f"""           
-                    MERGE INTO {summary_table} s
-                    USING case_3b c
-                    ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
-                    WHEN MATCHED THEN UPDATE SET {', '.join(update_set_exprs)}
-                """
-            )    
+            if not month_chunks:
+                month_chunks = [[r[prt]] for r in case_3b_filtered_df.select(prt).distinct().orderBy(prt).collect()]
+            case_3b_month_set = {
+                r[prt] for r in case_3b_filtered_df.select(prt).distinct().collect() if r[prt] is not None
+            }
+
+            for idx, months in enumerate(month_chunks, 1):
+                case_3b_chunk_months = [m for m in months if m in case_3b_month_set]
+                if not case_3b_chunk_months:
+                    continue
+
+                case_3b_chunk_df = case_3b_filtered_df.filter(F.col(prt).isin(case_3b_chunk_months))
+                case_3b_chunk_df.createOrReplaceTempView("case_3b_chunk")
+                spark.sql(
+                    f"""
+                        MERGE INTO {summary_table} s
+                        USING case_3b_chunk c
+                        ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
+                        WHEN MATCHED THEN UPDATE SET {', '.join(update_set_exprs)}
+                    """
+                )
+                logger.info(
+                    f"MERGED - CASE III-B chunk {idx}/{len(month_chunks)} "
+                    f"(months={case_3b_chunk_months})"
+                )
 
         process_end_time = time.time()
         process_total_minutes = (process_end_time - process_start_time) / 60
