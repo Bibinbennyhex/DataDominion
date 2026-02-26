@@ -61,7 +61,39 @@ def read_csv_columns(csv_path: Path) -> Dict[str, List[str]]:
     return values_by_col
 
 
+def is_source_schema_csv(fieldnames: List[str] | None) -> bool:
+    if not fieldnames:
+        return False
+    normalized = [name.strip().lower() for name in fieldnames]
+    return normalized == ["column_name", "type"]
+
+
+def read_source_schema_csv(csv_path: Path) -> List[Dict[str, str]]:
+    with csv_path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        if not is_source_schema_csv(reader.fieldnames):
+            raise ValueError(
+                f"Expected source schema CSV with header column_name,type: {csv_path}"
+            )
+
+        schema = []
+        for idx, row in enumerate(reader, start=2):
+            column_name = (row.get("column_name") or "").strip()
+            value_type = (row.get("type") or "").strip()
+            if not column_name or not value_type:
+                raise ValueError(f"Invalid schema row at {csv_path}:{idx}")
+            schema.append({"column_name": column_name, "type": value_type})
+    return schema
+
+
 def build_schema_for_csv(csv_path: Path) -> List[Dict[str, str]]:
+    with csv_path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames
+
+    if is_source_schema_csv(fieldnames):
+        return read_source_schema_csv(csv_path)
+
     values_by_col = read_csv_columns(csv_path)
     schema = []
     for col in values_by_col.keys():
