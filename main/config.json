@@ -42,6 +42,7 @@
         "interest_rate_4in": "interest_rate",
         "suit_filed_wilful_def_stat_cd_4in": "suit_filed_willful_dflt",
         "wo_settled_stat_cd_4in": "written_off_and_settled_status",
+        "soft_del_cd": "soft_del_cd",
         "base_ts": "base_ts",
         "rpt_as_of_mo": "rpt_as_of_mo"
     },

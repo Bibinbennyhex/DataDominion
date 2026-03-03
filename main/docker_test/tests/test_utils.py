@@ -109,6 +109,7 @@ SOURCE_SCHEMA_SPEC = [
     ("interest_rate_4in", "INT"),
     ("suit_filed_wilful_def_stat_cd_4in", "STRING"),
     ("wo_settled_stat_cd_4in", "STRING"),
+    ("soft_del_cd", "STRING"),
     ("base_ts", "TIMESTAMP"),
     ("rpt_as_of_mo", "STRING"),
     ("insert_ts", "TIMESTAMP"),
@@ -150,6 +151,7 @@ SUMMARY_SCHEMA_SPEC = [
     ("interest_rate", "INT"),
     ("suit_filed_willful_dflt", "STRING"),
     ("written_off_and_settled_status", "STRING"),
+    ("soft_del_cd", "STRING"),
     ("base_ts", "TIMESTAMP"),
     ("rpt_as_of_mo", "STRING"),
     ("orig_loan_am", "INT"),
@@ -162,6 +164,10 @@ SUMMARY_SCHEMA_SPEC = [
     ("days_past_due_history", "ARRAY<INT>"),
     ("asset_class_cd_4in_history", "ARRAY<STRING>"),
     ("payment_history_grid", "STRING"),
+]
+
+LATEST_SUMMARY_SCHEMA_SPEC = [
+    (name, sql_type) for name, sql_type in SUMMARY_SCHEMA_SPEC if name != "soft_del_cd"
 ]
 
 
@@ -190,6 +196,7 @@ def _build_schema(spec: List[tuple]) -> StructType:
 
 SOURCE_SCHEMA = _build_schema(SOURCE_SCHEMA_SPEC)
 SUMMARY_SCHEMA = _build_schema(SUMMARY_SCHEMA_SPEC)
+LATEST_SUMMARY_SCHEMA = _build_schema(LATEST_SUMMARY_SCHEMA_SPEC)
 
 
 def create_spark_session(app_name: str) -> SparkSession:
@@ -210,6 +217,12 @@ def create_spark_session(app_name: str) -> SparkSession:
         .config("spark.sql.catalog.temp_catalog.s3.endpoint", "http://minio:9000")
         .config("spark.sql.defaultCatalog", "primary_catalog")
         .config("spark.ui.showConsoleProgress", "false")
+        .config("spark.sql.iceberg.planning.preserve-data-grouping", "true")
+        .config("spark.sql.sources.v2.bucketing.enabled", "true")
+        .config("spark.sql.sources.v2.bucketing.pushPartValues.enabled", "true")
+        .config("spark.sql.requireAllClusterKeysForDistribution", "false")
+        .config("spark.sql.autoBroadcastJoinThreshold", "-1")
+        .config("spark.sql.adaptive.autoBroadcastJoinThreshold", "-1")
         .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000")
         .config("spark.hadoop.fs.s3a.access.key", "admin")
         .config("spark.hadoop.fs.s3a.secret.key", "password")
@@ -234,6 +247,12 @@ def load_main_test_config(namespace: str) -> Dict:
         "app_name": f"SummaryMainDocker_{namespace}",
         "spark.sql.shuffle.partitions": "32",
         "spark.default.parallelism": "32",
+        "spark.sql.iceberg.planning.preserve-data-grouping": "true",
+        "spark.sql.sources.v2.bucketing.enabled": "true",
+        "spark.sql.sources.v2.bucketing.pushPartValues.enabled": "true",
+        "spark.sql.requireAllClusterKeysForDistribution": "false",
+        "spark.sql.autoBroadcastJoinThreshold": "-1",
+        "spark.sql.adaptive.autoBroadcastJoinThreshold": "-1",
     }
 
     config.setdefault("performance", {})
@@ -265,7 +284,7 @@ def reset_tables(spark: SparkSession, config: Dict):
     for table in [source_table, summary_table, latest_table, tracker_table]:
         spark.sql(f"DROP TABLE IF EXISTS {table}")
 
-    for temp_case in ["case_1", "case_2", "case_3a", "case_3b", "case_4"]:
+    for temp_case in ["case_1", "case_2", "case_3a", "case_3b", "case_3d_month", "case_3d_future", "case_4"]:
         spark.sql(f"DROP TABLE IF EXISTS temp_catalog.checkpointdb.{temp_case}")
 
     spark.sql(
@@ -284,16 +303,17 @@ def reset_tables(spark: SparkSession, config: Dict):
             {_schema_sql(SUMMARY_SCHEMA_SPEC)}
         )
         USING iceberg
-        PARTITIONED BY (rpt_as_of_mo)
+        PARTITIONED BY (rpt_as_of_mo, bucket(64, cons_acct_key))
         """
     )
 
     spark.sql(
         f"""
         CREATE TABLE {latest_table} (
-            {_schema_sql(SUMMARY_SCHEMA_SPEC)}
+            {_schema_sql(LATEST_SUMMARY_SCHEMA_SPEC)}
         )
         USING iceberg
+        PARTITIONED BY (bucket(64, cons_acct_key))
         """
     )
 
@@ -320,6 +340,7 @@ def build_source_row(
     base_ts: datetime,
     balance: int,
     actual_payment: int,
+    soft_del_cd: str = "0",
     credit_limit: int = 10000,
     days_past_due: int = 0,
     past_due: int = 0,
@@ -365,6 +386,7 @@ def build_source_row(
             "interest_rate_4in": 0,
             "suit_filed_wilful_def_stat_cd_4in": "N",
             "wo_settled_stat_cd_4in": "N",
+            "soft_del_cd": str(soft_del_cd),
             "base_ts": base_ts,
             "rpt_as_of_mo": rpt_as_of_mo,
             "insert_ts": base_ts,
@@ -386,6 +408,7 @@ def build_summary_row(
     past_due: int = 0,
     asset_class: str = "A",
     payment_rating: str = "0",
+    soft_del_cd: str = "0",
     balance_history: Optional[List[Optional[int]]] = None,
     payment_history: Optional[List[Optional[int]]] = None,
     credit_history: Optional[List[Optional[int]]] = None,
@@ -441,6 +464,7 @@ def build_summary_row(
             "interest_rate": 0,
             "suit_filed_willful_dflt": "N",
             "written_off_and_settled_status": "N",
+            "soft_del_cd": str(soft_del_cd),
             "base_ts": base_ts,
             "rpt_as_of_mo": rpt_as_of_mo,
             "orig_loan_am": credit_limit,
@@ -470,6 +494,9 @@ def write_summary_rows(spark: SparkSession, table: str, rows: List[Dict]):
     if not rows:
         return
     df = spark.createDataFrame(rows, SUMMARY_SCHEMA)
+    target_cols = spark.table(table).columns
+    existing_cols = [c for c in target_cols if c in df.columns]
+    df = df.select(*existing_cols)
     df.writeTo(table).append()
 
 
