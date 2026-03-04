@@ -872,17 +872,19 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any], exp
     # Create temp view for affected keys
     affected_keys.createOrReplaceTempView("case_ii_affected_keys")
 
-    # Build column list
-    cols_select = ", ".join([pk, prt] + history_cols)
+    delete_codes_sql = ",".join([f"'{code}'" for code in SOFT_DELETE_CODES])
 
-    # Get data from latest_summary for the affected_keys
+    # Use latest_summary only (one row per account) and exclude deleted contexts.
     latest_for_affected_sql = f"""
-        SELECT {cols_select}
-        FROM {latest_summary_table} s
-        WHERE s.{pk} IN (SELECT {pk} FROM case_ii_affected_keys)
+        SELECT {', '.join([f"l.{c}" for c in [pk, prt] + history_cols])}
+        FROM {latest_summary_table} l
+        WHERE l.{pk} IN (SELECT {pk} FROM case_ii_affected_keys)
+          AND COALESCE(l.{SOFT_DELETE_COLUMN}, '0') NOT IN ({delete_codes_sql})
     """
-
-    latest_for_affected = spark.sql(latest_for_affected_sql)
+    latest_for_affected = spark.sql(latest_for_affected_sql).dropDuplicates([pk, prt]).withColumn(
+        "prev_month_int",
+        F.expr(month_to_int_expr(prt))
+    )
 
     # Collect peer forward entries into MAP for gap filling (Chaining)
     # Map Key: month_int, Map Value: Struct(val_col1, val_col2...)
@@ -906,27 +908,26 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any], exp
         )
     )
 
-    # Create temp views for SQL
-    case_ii_df.createOrReplaceTempView("case_ii_records")
-    latest_for_affected.createOrReplaceTempView("latest_summary_affected")
-
-    # Build SQL for array shifting
+    # Build SQL for array shifting (resolved accounts with non-deleted latest context)
     shift_exprs = []
     for rc in rolling_columns:
         array_name = f"{rc['name']}_history"
         mapper_column = rc['mapper_column']
+        prepared_col = f"_prepared_{rc['name']}"
+        current_value_col = prepared_col if prepared_col in case_ii_df.columns else mapper_column
         val_col_name = f"val_{rc['name']}"
+        month_diff_expr = "(c.month_int - p.prev_month_int)"
 
         shift_expr = f"""
             CASE
-                WHEN c.MONTH_DIFF = 1 THEN
-                    slice(concat(array(c.{mapper_column}), p.{array_name}), 1, {history_len})
-                WHEN c.MONTH_DIFF > 1 THEN
+                WHEN {month_diff_expr} = 1 THEN
+                    slice(concat(array(c.{current_value_col}), p.{array_name}), 1, {history_len})
+                WHEN {month_diff_expr} > 1 THEN
                     slice(
                         concat(
-                            array(c.{mapper_column}),
+                            array(c.{current_value_col}),
                             transform(
-                                sequence(1, c.MONTH_DIFF - 1),
+                                sequence(1, {month_diff_expr} - 1),
                                 i -> c.peer_map[CAST(c.month_int - i AS INT)].{val_col_name}
                             ),
                             p.{array_name}
@@ -934,7 +935,7 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any], exp
                         1, {history_len}
                     )
                 ELSE
-                    concat(array(c.{mapper_column}), array_repeat(NULL, {history_len - 1}))
+                    concat(array(c.{current_value_col}), array_repeat(NULL, {history_len - 1}))
             END as {array_name}
         """
         shift_exprs.append(shift_expr)
@@ -957,15 +958,50 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any], exp
     current_cols = [c for c in case_ii_df.columns if c not in exclude_cols]
     current_select = ", ".join([f"c.{col}" for col in current_cols])
 
-    sql = f"""
-        SELECT 
-            {current_select},
-            {', '.join(shift_exprs)}
-        FROM case_ii_records c
-        JOIN latest_summary_affected p ON c.{pk} = p.{pk}
-    """
+    latest_context_keys = latest_for_affected.select(pk).distinct().withColumn("_has_latest_context", F.lit(1))
+    case_ii_with_context = case_ii_df.join(latest_context_keys, on=pk, how="left")
+    case_ii_resolved = case_ii_with_context.filter(F.col("_has_latest_context").isNotNull()).drop("_has_latest_context")
+    case_ii_unresolved = case_ii_with_context.filter(F.col("_has_latest_context").isNull()).drop("_has_latest_context")
 
-    result = spark.sql(sql)
+    result_parts = []
+
+    if not case_ii_resolved.isEmpty():
+        case_ii_resolved.createOrReplaceTempView("case_ii_records")
+        latest_for_affected.createOrReplaceTempView("latest_summary_affected")
+        sql = f"""
+            SELECT 
+                {current_select},
+                {', '.join(shift_exprs)}
+            FROM case_ii_records c
+            JOIN latest_summary_affected p ON c.{pk} = p.{pk}
+        """
+        result_parts.append(spark.sql(sql))
+
+    # Accounts with no non-deleted latest context are treated as Case I style initialization.
+    if not case_ii_unresolved.isEmpty():
+        unresolved_select_exprs = [F.col(c) for c in current_cols]
+        for rc in rolling_columns:
+            array_name = f"{rc['name']}_history"
+            mapper_column = rc['mapper_column']
+            prepared_col = f"_prepared_{rc['name']}"
+            value_col = prepared_col if prepared_col in case_ii_unresolved.columns else mapper_column
+            value_type = case_ii_unresolved.schema[value_col].dataType
+            unresolved_select_exprs.append(
+                F.concat(
+                    F.array(F.col(value_col)),
+                    F.array_repeat(F.lit(None).cast(value_type), history_len - 1)
+                ).alias(array_name)
+            )
+        result_parts.append(case_ii_unresolved.select(*unresolved_select_exprs))
+
+    if not result_parts:
+        logger.warning("No Case II rows generated after context split")
+        return
+
+    if len(result_parts) == 1:
+        result = result_parts[0]
+    else:
+        result = result_parts[0].unionByName(result_parts[1])
 
     # Generate grid columns
     for gc in grid_columns:
@@ -1031,6 +1067,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
     history_len = config.get('history_length', HISTORY_LENGTH)
     rolling_columns = config.get('rolling_columns', [])
     grid_columns = config.get('grid_columns', [])
+    delete_codes_sql = ",".join([f"'{code}'" for code in SOFT_DELETE_CODES])
 
     # Get affected accounts
     affected_accounts = case_iii_df.select(pk).distinct()
@@ -1084,6 +1121,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
         SELECT {', '.join(summary_select_cols)}
         FROM {summary_table}
         WHERE {prt} >= '{earliest_partition}' AND {prt} <= '{latest_partition}'
+          AND COALESCE({SOFT_DELETE_COLUMN}, '0') NOT IN ({delete_codes_sql})
     """
     summary_df = spark.sql(partition_filter_sql)
 
