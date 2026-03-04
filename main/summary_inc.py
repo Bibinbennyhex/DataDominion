@@ -236,6 +236,26 @@ def validate_config(config: Dict[str, Any]) -> bool:
     return True
 
 
+def ensure_soft_delete_columns(spark: SparkSession, config: Dict[str, Any]) -> None:
+    """
+    Ensure summary/latest_summary tables both expose soft_del_cd.
+    """
+    summary_table = config["destination_table"]
+    latest_summary_table = config["latest_history_table"]
+
+    if spark.catalog.tableExists(summary_table):
+        summary_cols = spark.table(summary_table).columns
+        if SOFT_DELETE_COLUMN not in summary_cols:
+            logger.info(f"Adding {SOFT_DELETE_COLUMN} to {summary_table}")
+            spark.sql(f"ALTER TABLE {summary_table} ADD COLUMN {SOFT_DELETE_COLUMN} STRING")
+
+    if spark.catalog.tableExists(latest_summary_table):
+        latest_cols = spark.table(latest_summary_table).columns
+        if SOFT_DELETE_COLUMN not in latest_cols:
+            logger.info(f"Adding {SOFT_DELETE_COLUMN} to {latest_summary_table}")
+            spark.sql(f"ALTER TABLE {latest_summary_table} ADD COLUMN {SOFT_DELETE_COLUMN} STRING")
+
+
 def create_spark_session(app_name: str, spark_config: Dict[str, Any]):
     spark_builder = SparkSession.builder.appName(app_name)
     for key,value in spark_config.items():
@@ -2286,6 +2306,35 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
             logger.info(f"Updated latest_summary | MERGE - CASE III Soft Delete Future Patches | Time Elapsed: {process_total_minutes:.2f} minutes")
             logger.info("-" * 60)
 
+        # Apply month-row soft-delete flags to latest_summary when latest row month was deleted.
+        process_start_time = time.time()
+        if case_3d_month_df is not None:
+            latest_cols = set(spark.table(latest_summary_table).columns)
+            if SOFT_DELETE_COLUMN in latest_cols:
+                latest_case_3d_month_df = (
+                    case_3d_month_df
+                    .select(pk, prt, ts, SOFT_DELETE_COLUMN)
+                    .dropDuplicates([pk, prt])
+                )
+                latest_case_3d_month_df.createOrReplaceTempView("latest_case_3d_month")
+                spark.sql(
+                    f"""
+                        MERGE INTO {latest_summary_table} s
+                        USING latest_case_3d_month c
+                        ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
+                        WHEN MATCHED THEN UPDATE SET
+                            s.{SOFT_DELETE_COLUMN} = c.{SOFT_DELETE_COLUMN},
+                            s.{ts} = GREATEST(s.{ts}, c.{ts})
+                    """
+                )
+                process_end_time = time.time()
+                process_total_minutes = (process_end_time - process_start_time) / 60
+                logger.info(
+                    f"Updated latest_summary | MERGE - CASE III Soft Delete Month Flags | "
+                    f"Time Elapsed: {process_total_minutes:.2f} minutes"
+                )
+                logger.info("-" * 60)
+
         # Reconstruct latest_summary when the latest month itself was soft-deleted.
         process_start_time = time.time()
         if case_3d_month_df is not None:
@@ -2492,6 +2541,7 @@ def run_pipeline(spark: SparkSession, config: Dict[str, Any]):
     }
 
     try:
+        ensure_soft_delete_columns(spark, config)
         process_start_time = time.time()    
 
         # Step 1: Load and classify

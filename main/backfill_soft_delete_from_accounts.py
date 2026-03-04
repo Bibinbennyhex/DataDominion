@@ -149,6 +149,12 @@ def _prepare_case_tables(spark: SparkSession):
         spark.sql(f"ALTER TABLE {SUMMARY_TABLE} ADD COLUMN {SOFT_DELETE_COLUMN} STRING")
         summary_cols = spark.table(SUMMARY_TABLE).columns
 
+    if spark.catalog.tableExists(LATEST_SUMMARY_TABLE):
+        latest_cols = spark.table(LATEST_SUMMARY_TABLE).columns
+        if SOFT_DELETE_COLUMN not in latest_cols:
+            logger.info(f"Adding {SOFT_DELETE_COLUMN} to {LATEST_SUMMARY_TABLE}")
+            spark.sql(f"ALTER TABLE {LATEST_SUMMARY_TABLE} ADD COLUMN {SOFT_DELETE_COLUMN} STRING")
+
     history_cols = sorted([c for c in summary_cols if c.endswith("_history")])
     grid_specs = [g for g in GRID_SPECS if g["name"] in summary_cols and g["source_history"] in history_cols]
 
@@ -397,6 +403,28 @@ def _merge_case_tables_chunked(spark: SparkSession, history_cols, grid_specs):
                 """
             )
             logger.info("Updated latest_summary | Applied soft-delete future patches")
+
+    # Update latest_summary soft_del_cd for deleted month rows when latest month is deleted.
+    if case_3d_month_df is not None and spark.catalog.tableExists(LATEST_SUMMARY_TABLE):
+        latest_cols = set(spark.table(LATEST_SUMMARY_TABLE).columns)
+        if SOFT_DELETE_COLUMN in latest_cols:
+            (
+                case_3d_month_df
+                .select(PK, PRT, TS, SOFT_DELETE_COLUMN)
+                .dropDuplicates([PK, PRT])
+                .createOrReplaceTempView("latest_case_3d_month")
+            )
+            spark.sql(
+                f"""
+                    MERGE INTO {LATEST_SUMMARY_TABLE} s
+                    USING latest_case_3d_month c
+                    ON s.{PK} = c.{PK} AND s.{PRT} = c.{PRT}
+                    WHEN MATCHED THEN UPDATE SET
+                        s.{SOFT_DELETE_COLUMN} = c.{SOFT_DELETE_COLUMN},
+                        s.{TS} = GREATEST(s.{TS}, c.{TS})
+                """
+            )
+            logger.info("Updated latest_summary | Applied soft-delete month flags")
 
     # Reconstruct latest_summary rows if latest month itself was soft-deleted.
     if case_3d_month_df is not None and spark.catalog.tableExists(LATEST_SUMMARY_TABLE):
