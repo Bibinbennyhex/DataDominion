@@ -6,6 +6,17 @@
     "primary_column": "cons_acct_key",
     "primary_date_column": "acct_dt",
     "max_identifier_column": "base_ts",
+    "hist_rpt_dt_table": "primary_catalog.edf_gold.consumer_account_hist_rpt",
+    "hist_rpt_dt_cols": [
+        "cons_acct_key",
+        "soft_del_cd",
+        "acct_dt",
+        "base_ts",
+        "insert_dt",
+        "update_dt",
+        "insert_time",
+        "update_time"
+    ],
     "history_length": 36,
     "columns": {
         "cons_acct_key": "cons_acct_key",

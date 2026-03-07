@@ -7,44 +7,22 @@ import json
 import os
 import runpy
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 
 from pyspark.sql import functions as F
 
 import test_utils
+import backfill_soft_delete_from_accounts as backfill_job
+from suite_manifest import CORE_TESTS
 
 
-TEST_FILES = [
-    "simple_test.py",
-    "test_main_all_cases.py",
-    "test_main_base_ts_propagation.py",
-    "run_backfill_test.py",
-    "test_all_scenarios.py",
-    "test_all_scenarios_v942.py",
-    "test_bulk_historical_load.py",
-    "test_complex_scenarios.py",
-    "test_case3_current_max_month.py",
-    "test_soft_delete_case_iii.py",
-    "test_comprehensive_50_cases.py",
-    "test_comprehensive_edge_cases.py",
-    "test_consecutive_backfill.py",
-    "test_duplicate_records.py",
-    "test_full_46_columns.py",
-    "test_long_backfill_gaps.py",
-    "test_non_continuous_backfill.py",
-    "test_null_update_case_iii.py",
-    "test_null_update_other_cases.py",
-    "test_null_update.py",
-    "test_idempotency.py",
-    "test_latest_summary_consistency.py",
-    "test_recovery.py",
-    # Additional high-value test not in run_all_tests.py
-    "test_aggressive_idempotency.py",
-]
+TEST_FILES = CORE_TESTS + ["test_aggressive_idempotency.py"]
 
 
 CURRENT_TEST = {"name": None}
 PIPELINE_CALLS = []
+BACKFILL_CALLS = []
 TEST_RESULTS = []
 
 
@@ -100,13 +78,14 @@ def _snapshot_pair(spark, config):
 
 
 ORIG_RUN_PIPELINE = test_utils.main_pipeline.run_pipeline
+ORIG_BACKFILL_MERGE = backfill_job._merge_case_tables_chunked
 
 
 def _wrapped_run_pipeline(spark, config, *args, **kwargs):
     test_name = CURRENT_TEST["name"] or "UNKNOWN_TEST"
     before = _snapshot_pair(spark, config)
     err = None
-    started = datetime.utcnow().isoformat()
+    started = datetime.now(timezone.utc).isoformat()
     try:
         return ORIG_RUN_PIPELINE(spark, config, *args, **kwargs)
     except Exception as exc:
@@ -117,6 +96,35 @@ def _wrapped_run_pipeline(spark, config, *args, **kwargs):
         PIPELINE_CALLS.append(
             {
                 "test": test_name,
+                "call_type": "pipeline",
+                "started_utc": started,
+                "before": before,
+                "after": after,
+                "error": err,
+            }
+        )
+
+
+def _wrapped_backfill_merge_case_tables_chunked(spark, history_cols, grid_specs, *args, **kwargs):
+    test_name = CURRENT_TEST["name"] or "UNKNOWN_TEST"
+    cfg = {
+        "destination_table": backfill_job.SUMMARY_TABLE,
+        "latest_history_table": backfill_job.LATEST_SUMMARY_TABLE,
+    }
+    before = _snapshot_pair(spark, cfg)
+    err = None
+    started = datetime.now(timezone.utc).isoformat()
+    try:
+        return ORIG_BACKFILL_MERGE(spark, history_cols, grid_specs, *args, **kwargs)
+    except Exception as exc:
+        err = str(exc).split("\n")[0]
+        raise
+    finally:
+        after = _snapshot_pair(spark, cfg)
+        BACKFILL_CALLS.append(
+            {
+                "test": test_name,
+                "call_type": "standalone_backfill_soft_delete",
                 "started_utc": started,
                 "before": before,
                 "after": after,
@@ -127,10 +135,14 @@ def _wrapped_run_pipeline(spark, config, *args, **kwargs):
 
 def _aggregate_test_result(test_file: str):
     calls = [c for c in PIPELINE_CALLS if c["test"] == test_file]
-    if not calls:
+    backfill_calls = [c for c in BACKFILL_CALLS if c["test"] == test_file]
+    all_calls = calls + backfill_calls
+
+    if not all_calls:
         return {
             "test": test_file,
             "pipeline_calls": 0,
+            "backfill_calls": 0,
             "summary_rows_before": None,
             "summary_rows_after": None,
             "latest_rows_before": None,
@@ -140,30 +152,37 @@ def _aggregate_test_result(test_file: str):
             "call_errors": 0,
         }
 
-    first = calls[0]
-    last = calls[-1]
+    first = all_calls[0]
+    last = all_calls[-1]
     return {
         "test": test_file,
         "pipeline_calls": len(calls),
+        "backfill_calls": len(backfill_calls),
         "summary_rows_before": first["before"]["summary"]["rows"],
         "summary_rows_after": last["after"]["summary"]["rows"],
         "latest_rows_before": first["before"]["latest_summary"]["rows"],
         "latest_rows_after": last["after"]["latest_summary"]["rows"],
         "summary_max_month_after": last["after"]["summary"]["max_month"],
         "latest_max_month_after": last["after"]["latest_summary"]["max_month"],
-        "call_errors": sum(1 for c in calls if c["error"]),
+        "call_errors": sum(1 for c in all_calls if c["error"]),
     }
 
 
 def main():
-    tests_dir = os.path.dirname(os.path.abspath(__file__))
-    os.chdir(tests_dir)
+    tests_dir = Path(__file__).resolve().parent
+    os.chdir(str(tests_dir))
+
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    output_dir_env = os.environ.get("AUDIT_OUTPUT_DIR", "").strip()
+    output_dir = Path(output_dir_env) if output_dir_env else tests_dir / "artifacts" / "audits" / f"run_{run_id}"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     test_utils.main_pipeline.run_pipeline = _wrapped_run_pipeline
+    backfill_job._merge_case_tables_chunked = _wrapped_backfill_merge_case_tables_chunked
     try:
         for test_file in TEST_FILES:
             CURRENT_TEST["name"] = test_file
-            path = os.path.join(tests_dir, test_file)
+            path = str(tests_dir / test_file)
             status = "PASS"
             error = ""
             try:
@@ -180,21 +199,27 @@ def main():
             print(f"[AUDIT] {test_file} -> {status}")
     finally:
         test_utils.main_pipeline.run_pipeline = ORIG_RUN_PIPELINE
+        backfill_job._merge_case_tables_chunked = ORIG_BACKFILL_MERGE
 
     payload = {
-        "generated_utc": datetime.utcnow().isoformat(),
+        "generated_utc": datetime.now(timezone.utc).isoformat(),
+        "run_id": run_id,
         "results": TEST_RESULTS,
         "calls": PIPELINE_CALLS,
+        "backfill_calls": BACKFILL_CALLS,
     }
-    out_json = os.path.join(tests_dir, "_audit_before_after_results.json")
-    with open(out_json, "w", encoding="utf-8") as f:
+    out_json = output_dir / "audit_before_after_results.json"
+    with out_json.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, default=str)
 
+    latest_pointer = tests_dir / "_audit_before_after_results.json"
+    latest_pointer.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+
     print("\n=== AUDIT SUMMARY ===")
-    print("test | status | calls | summary_before->after | latest_before->after | call_errors")
+    print("test | status | calls(pipeline/backfill) | summary_before->after | latest_before->after | call_errors")
     for r in TEST_RESULTS:
         print(
-            f"{r['test']} | {r['status']} | {r['pipeline_calls']} | "
+            f"{r['test']} | {r['status']} | {r['pipeline_calls']}/{r['backfill_calls']} | "
             f"{r['summary_rows_before']}->{r['summary_rows_after']} | "
             f"{r['latest_rows_before']}->{r['latest_rows_after']} | "
             f"{r['call_errors']}"

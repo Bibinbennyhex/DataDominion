@@ -138,12 +138,12 @@ def run_test():
         print("[SETUP] Loading soft-delete source batch...")
         source_rows = [
             # Duplicate for same account+month: later delete should win.
-            build_source_row(7001, "2026-01", delete_loser_ts, balance=9998, actual_payment=998, soft_del_cd=0),
-            build_source_row(7001, "2026-01", delete_winner_ts, balance=9999, actual_payment=999, soft_del_cd=1),
+            build_source_row(7001, "2026-01", delete_loser_ts, balance=9998, actual_payment=998, soft_del_cd=""),
+            build_source_row(7001, "2026-01", delete_winner_ts, balance=9999, actual_payment=999, soft_del_cd="1"),
             # Non-existing summary month delete should be ignored.
-            build_source_row(7001, "2024-12", delete_winner_ts, balance=1111, actual_payment=111, soft_del_cd=1),
+            build_source_row(7001, "2024-12", delete_winner_ts, balance=1111, actual_payment=111, soft_del_cd="1"),
             # Latest-month delete (account 7002) should force latest_summary reconstruction.
-            build_source_row(7002, "2026-02", latest_delete_ts, balance=2222, actual_payment=222, soft_del_cd=4),
+            build_source_row(7002, "2026-02", latest_delete_ts, balance=2222, actual_payment=222, soft_del_cd="4"),
         ]
         write_source_rows(spark, config["source_table"], source_rows)
 

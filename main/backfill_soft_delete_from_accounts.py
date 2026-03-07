@@ -15,11 +15,13 @@ logger.setLevel(logging.INFO)
 
 # Fixed execution settings (no runtime args / no config-file wiring).
 SOURCE_TABLE = "spark_catalog.edf_gold.ivaps_consumer_accounts_all"
+HIST_RPT_TABLE = "primary_catalog.edf_gold.consumer_account_hist_rpt"
 SUMMARY_TABLE = "primary_catalog.edf_gold.summary"
 LATEST_SUMMARY_TABLE = "primary_catalog.edf_gold.latest_summary"
 PK = "cons_acct_key"
 PRT = "rpt_as_of_mo"
 TS = "base_ts"
+PDT = "acct_dt"
 SOFT_DELETE_COLUMN = "soft_del_cd"
 DELETE_CODES = ["1", "4"]
 HISTORY_LENGTH = 36
@@ -42,12 +44,12 @@ GRID_SPECS = [
 
 def _normalize_soft_delete_col(df):
     if SOFT_DELETE_COLUMN not in df.columns:
-        df = df.withColumn(SOFT_DELETE_COLUMN, F.lit("0"))
+        df = df.withColumn(SOFT_DELETE_COLUMN, F.lit(""))
     return df.withColumn(
         SOFT_DELETE_COLUMN,
         F.when(
             F.trim(F.coalesce(F.col(SOFT_DELETE_COLUMN).cast(StringType()), F.lit(""))) == "",
-            F.lit("0"),
+            F.lit(""),
         ).otherwise(F.trim(F.col(SOFT_DELETE_COLUMN).cast(StringType()))),
     )
 
@@ -320,6 +322,206 @@ def _prepare_case_tables(spark: SparkSession):
     return True, history_cols, grid_specs
 
 
+def _backfill_acct_dt_and_soft_delete_from_hist_rpt(spark: SparkSession) -> bool:
+    """
+    Pre-backfill summary/latest rows for acct_dt + soft_del_cd using:
+    - accounts_all latest-by (base_ts, insert_ts, update_ts)
+    - consumer_account_hist_rpt latest-by
+      (base_ts, insert_dt, update_dt, insert_time, update_time)
+    """
+    if not spark.catalog.tableExists(HIST_RPT_TABLE):
+        logger.warning(f"{HIST_RPT_TABLE} not found; skipping acct_dt/soft_del pre-backfill.")
+        return False
+
+    summary_cols = spark.table(SUMMARY_TABLE).columns
+    if SOFT_DELETE_COLUMN not in summary_cols:
+        logger.info(f"Adding {SOFT_DELETE_COLUMN} to {SUMMARY_TABLE}")
+        spark.sql(f"ALTER TABLE {SUMMARY_TABLE} ADD COLUMN {SOFT_DELETE_COLUMN} STRING")
+        summary_cols = spark.table(SUMMARY_TABLE).columns
+    if PDT not in summary_cols:
+        logger.info(f"Adding {PDT} to {SUMMARY_TABLE}")
+        spark.sql(f"ALTER TABLE {SUMMARY_TABLE} ADD COLUMN {PDT} DATE")
+
+    if spark.catalog.tableExists(LATEST_SUMMARY_TABLE):
+        latest_cols = spark.table(LATEST_SUMMARY_TABLE).columns
+        if SOFT_DELETE_COLUMN not in latest_cols:
+            logger.info(f"Adding {SOFT_DELETE_COLUMN} to {LATEST_SUMMARY_TABLE}")
+            spark.sql(f"ALTER TABLE {LATEST_SUMMARY_TABLE} ADD COLUMN {SOFT_DELETE_COLUMN} STRING")
+        if PDT not in latest_cols:
+            logger.info(f"Adding {PDT} to {LATEST_SUMMARY_TABLE}")
+            spark.sql(f"ALTER TABLE {LATEST_SUMMARY_TABLE} ADD COLUMN {PDT} DATE")
+
+    src = spark.table(SOURCE_TABLE)
+    if "insert_ts" not in src.columns:
+        src = src.withColumn("insert_ts", F.col(TS))
+    if "update_ts" not in src.columns:
+        src = src.withColumn("update_ts", F.col(TS))
+    if SOFT_DELETE_COLUMN not in src.columns:
+        src = src.withColumn(SOFT_DELETE_COLUMN, F.lit(""))
+
+    src = _normalize_soft_delete_col(src.select(PK, PRT, PDT, TS, "insert_ts", "update_ts", SOFT_DELETE_COLUMN))
+    src_latest_window = Window.partitionBy(PK, PRT).orderBy(
+        F.col(TS).desc(),
+        F.col("insert_ts").desc(),
+        F.col("update_ts").desc(),
+    )
+    src_latest = (
+        src.withColumn("_rn", F.row_number().over(src_latest_window))
+        .filter(F.col("_rn") == 1)
+        .drop("_rn", "insert_ts", "update_ts")
+    )
+
+    hist = spark.table(HIST_RPT_TABLE)
+    if PDT not in hist.columns or TS not in hist.columns:
+        logger.warning(f"{HIST_RPT_TABLE} missing required columns ({PDT}, {TS}); skipping acct_dt/soft_del pre-backfill.")
+        return False
+    if SOFT_DELETE_COLUMN not in hist.columns:
+        hist = hist.withColumn(SOFT_DELETE_COLUMN, F.lit(""))
+    if "insert_dt" not in hist.columns:
+        hist = hist.withColumn("insert_dt", F.col(TS))
+    if "update_dt" not in hist.columns:
+        hist = hist.withColumn("update_dt", F.col(TS))
+    if "insert_time" not in hist.columns:
+        hist = hist.withColumn("insert_time", F.lit(None).cast(StringType()))
+    if "update_time" not in hist.columns:
+        hist = hist.withColumn("update_time", F.lit(None).cast(StringType()))
+
+    hist = _normalize_soft_delete_col(
+        hist.select(PK, PDT, TS, SOFT_DELETE_COLUMN, "insert_dt", "update_dt", "insert_time", "update_time")
+    ).withColumn(PRT, F.date_format(F.col(PDT), "yyyy-MM"))
+
+    hist_order_exprs = [
+        F.col(TS).desc(),
+        F.col("insert_dt").desc(),
+        F.col("update_dt").desc(),
+        F.col("insert_time").desc(),
+        F.col("update_time").desc(),
+    ]
+    hist_latest_window = Window.partitionBy(PK, PRT).orderBy(*hist_order_exprs)
+    hist_latest = (
+        hist.withColumn("_rn", F.row_number().over(hist_latest_window))
+        .filter(F.col("_rn") == 1)
+        .drop("_rn", "insert_dt", "update_dt", "insert_time", "update_time")
+    )
+    delete_codes_sql = ",".join([f"'{code}'" for code in DELETE_CODES])
+
+    resolved = (
+        src_latest.alias("r")
+        .join(
+            hist_latest.alias("d"),
+            [PK, PRT],
+            "left",
+        )
+        .selectExpr(
+            f"r.{PK} as {PK}",
+            f"r.{PRT} as {PRT}",
+            f"r.{TS} as {TS}",
+            f"""
+                CASE
+                    WHEN COALESCE(r.{SOFT_DELETE_COLUMN}, '') IN ({delete_codes_sql})
+                         AND COALESCE(d.{SOFT_DELETE_COLUMN}, '') IN ({delete_codes_sql}) THEN NULL
+                    WHEN COALESCE(r.{SOFT_DELETE_COLUMN}, '') NOT IN ({delete_codes_sql})
+                         AND (COALESCE(d.{SOFT_DELETE_COLUMN}, '') IN ({delete_codes_sql}) OR r.{PDT} > d.{PDT}) THEN r.{PDT}
+                    WHEN COALESCE(d.{SOFT_DELETE_COLUMN}, '') NOT IN ({delete_codes_sql})
+                         AND (COALESCE(r.{SOFT_DELETE_COLUMN}, '') IN ({delete_codes_sql}) OR d.{PDT} > r.{PDT}) THEN d.{PDT}
+                    ELSE r.{PDT}
+                END AS {PDT}
+            """,
+            f"""
+                CASE
+                    WHEN COALESCE(r.{SOFT_DELETE_COLUMN}, '') IN ({delete_codes_sql})
+                         AND COALESCE(d.{SOFT_DELETE_COLUMN}, '') IN ({delete_codes_sql}) THEN r.{SOFT_DELETE_COLUMN}
+                    WHEN COALESCE(r.{SOFT_DELETE_COLUMN}, '') NOT IN ({delete_codes_sql})
+                         AND (COALESCE(d.{SOFT_DELETE_COLUMN}, '') IN ({delete_codes_sql}) OR r.{PDT} > d.{PDT}) THEN r.{SOFT_DELETE_COLUMN}
+                    WHEN COALESCE(d.{SOFT_DELETE_COLUMN}, '') NOT IN ({delete_codes_sql})
+                         AND (COALESCE(r.{SOFT_DELETE_COLUMN}, '') IN ({delete_codes_sql}) OR d.{PDT} > r.{PDT}) THEN d.{SOFT_DELETE_COLUMN}
+                    ELSE r.{SOFT_DELETE_COLUMN}
+                END AS {SOFT_DELETE_COLUMN}
+            """,
+        )
+    )
+
+    summary_keys = spark.table(SUMMARY_TABLE).select(PK, PRT).distinct()
+    updates = resolved.join(summary_keys, [PK, PRT], "inner")
+    update_count = updates.count()
+    logger.info(f"acct_dt/soft_del updates matching summary rows: {update_count:,}")
+    if update_count == 0:
+        return False
+
+    month_chunks = _build_month_chunks(updates, overflow_ratio=MONTH_CHUNK_OVERFLOW)
+    logger.info(f"acct_dt/soft_del merge chunks: {len(month_chunks)}")
+    for idx, months in enumerate(month_chunks, 1):
+        chunk_df = updates.filter(F.col(PRT).isin(months))
+        chunk_df = _align_for_merge(spark, chunk_df, expected_rows=update_count)
+        chunk_df.createOrReplaceTempView("acct_softdel_chunk")
+
+        spark.sql(
+            f"""
+                MERGE INTO {SUMMARY_TABLE} s
+                USING acct_softdel_chunk c
+                ON s.{PK} = c.{PK} AND s.{PRT} = c.{PRT}
+                WHEN MATCHED THEN UPDATE SET
+                    s.{PDT} = c.{PDT},
+                    s.{SOFT_DELETE_COLUMN} = c.{SOFT_DELETE_COLUMN},
+                    s.{TS} = GREATEST(s.{TS}, c.{TS})
+            """
+        )
+        logger.info(f"MERGED acct_dt/soft_del into summary chunk {idx}/{len(month_chunks)} (months={months})")
+
+        if spark.catalog.tableExists(LATEST_SUMMARY_TABLE):
+            spark.sql(
+                f"""
+                    MERGE INTO {LATEST_SUMMARY_TABLE} l
+                    USING acct_softdel_chunk c
+                    ON l.{PK} = c.{PK} AND l.{PRT} = c.{PRT}
+                    WHEN MATCHED THEN UPDATE SET
+                        l.{PDT} = c.{PDT},
+                        l.{SOFT_DELETE_COLUMN} = c.{SOFT_DELETE_COLUMN},
+                        l.{TS} = GREATEST(l.{TS}, c.{TS})
+                """
+            )
+
+    if spark.catalog.tableExists(LATEST_SUMMARY_TABLE):
+        touched_accounts = updates.select(PK).distinct()
+        touched_accounts.createOrReplaceTempView("acct_softdel_touched_accounts")
+
+        latest_cols = spark.table(LATEST_SUMMARY_TABLE).columns
+        summary_cols = spark.table(SUMMARY_TABLE).columns
+        common_cols = [c for c in latest_cols if c in summary_cols]
+        replacement_df = spark.sql(
+            f"""
+                SELECT *
+                FROM (
+                    SELECT
+                        s.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY s.{PK}
+                            ORDER BY s.{PRT} DESC, s.{TS} DESC
+                        ) as _rn
+                    FROM {SUMMARY_TABLE} s
+                    JOIN acct_softdel_touched_accounts a ON s.{PK} = a.{PK}
+                ) x
+                WHERE _rn = 1
+            """
+        ).drop("_rn")
+
+        if not replacement_df.isEmpty() and common_cols:
+            replacement_df.select(*common_cols).createOrReplaceTempView("latest_acct_softdel_replacements")
+            update_set = ", ".join([f"l.{c} = c.{c}" for c in common_cols if c != PK])
+            if update_set:
+                spark.sql(
+                    f"""
+                        MERGE INTO {LATEST_SUMMARY_TABLE} l
+                        USING latest_acct_softdel_replacements c
+                        ON l.{PK} = c.{PK}
+                        WHEN MATCHED THEN UPDATE SET {update_set}
+                    """
+                )
+                logger.info("Updated latest_summary | Recomputed latest rows for acct_dt/soft_del touched accounts")
+
+    return True
+
+
 def _merge_case_tables_chunked(spark: SparkSession, history_cols, grid_specs):
     case_3d_month_df = None
     case_3d_future_df = None
@@ -456,7 +658,7 @@ def _merge_case_tables_chunked(spark: SparkSession, history_cols, grid_specs):
                             ) as _rn
                         FROM {SUMMARY_TABLE} s
                         JOIN deleted_latest_accounts a ON s.{PK} = a.{PK}
-                        WHERE COALESCE(s.{SOFT_DELETE_COLUMN}, '0') NOT IN ({delete_codes_sql})
+                        WHERE COALESCE(s.{SOFT_DELETE_COLUMN}, '') NOT IN ({delete_codes_sql})
                     ) x
                     WHERE _rn = 1
                 """
@@ -520,12 +722,14 @@ def main():
     spark.sparkContext.setLogLevel("WARN")
     start = time.time()
     try:
+        hist_updates = _backfill_acct_dt_and_soft_delete_from_hist_rpt(spark)
         has_updates, history_cols, grid_specs = _prepare_case_tables(spark)
-        if not has_updates:
-            logger.info("No soft-delete updates to apply.")
+        if not has_updates and not hist_updates:
+            logger.info("No acct_dt/soft_del or soft-delete-array updates to apply.")
             return
-        _merge_case_tables_chunked(spark, history_cols, grid_specs)
-        logger.info("Soft-delete backfill completed.")
+        if has_updates:
+            _merge_case_tables_chunked(spark, history_cols, grid_specs)
+        logger.info("Pre-summary backfill completed (acct_dt/soft_del + soft-delete array patches).")
     finally:
         logger.info(f"Elapsed: {(time.time() - start) / 60:.2f} minutes")
         spark.stop()

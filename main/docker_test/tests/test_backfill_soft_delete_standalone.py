@@ -20,6 +20,7 @@ if MAIN_DIR not in sys.path:
 
 import backfill_soft_delete_from_accounts as backfill_job
 from test_utils import (
+    assert_deletion_aware_invariants,
     build_source_row,
     build_summary_row,
     create_spark_session,
@@ -164,6 +165,7 @@ def run_test():
         _assert_equal(l_8101_2026_02["balance_am_history"][1], None, "latest_summary index 1 should be nullified")
         _assert_equal(l_8101_2026_02["balance_am_history"][2], None, "latest_summary index 2 should be nullified")
         _assert_equal(l_8102_2026_01["rpt_as_of_mo"], "2026-01", "latest_summary should reconstruct to prior non-deleted month")
+        assert_deletion_aware_invariants(spark, config)
 
         print("[PASS] test_backfill_soft_delete_standalone")
     finally:

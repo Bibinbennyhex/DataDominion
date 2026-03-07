@@ -26,8 +26,12 @@ $tests = @(
     @{ name = "test_aggressive_idempotency.py"; args = @("--scale", "TINY", "--cycles", "2", "--reruns", "2") }
 )
 
-$logPath = "main/docker_test/tests/_retest_run.log"
-$resultPath = "main/docker_test/tests/_retest_results.json"
+$runId = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+$artifactRoot = "main/docker_test/tests/artifacts/logs/retest_$runId"
+$logPath = "$artifactRoot/retest_run.log"
+$resultPath = "$artifactRoot/retest_results.json"
+
+New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
 
 if (Test-Path $logPath) {
     Remove-Item $logPath -Force

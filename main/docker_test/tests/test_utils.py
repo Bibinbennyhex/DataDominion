@@ -166,9 +166,7 @@ SUMMARY_SCHEMA_SPEC = [
     ("payment_history_grid", "STRING"),
 ]
 
-LATEST_SUMMARY_SCHEMA_SPEC = [
-    (name, sql_type) for name, sql_type in SUMMARY_SCHEMA_SPEC if name != "soft_del_cd"
-]
+LATEST_SUMMARY_SCHEMA_SPEC = list(SUMMARY_SCHEMA_SPEC)
 
 
 def _spark_type(sql_type: str):
@@ -242,6 +240,7 @@ def load_main_test_config(namespace: str) -> Dict:
     config["source_table"] = f"primary_catalog.{namespace}.accounts_all"
     config["destination_table"] = f"primary_catalog.{namespace}.summary"
     config["latest_history_table"] = f"primary_catalog.{namespace}.latest_summary"
+    config["hist_rpt_dt_table"] = f"primary_catalog.{namespace}.consumer_account_hist_rpt"
 
     config["spark"] = {
         "app_name": f"SummaryMainDocker_{namespace}",
@@ -271,6 +270,7 @@ def reset_tables(spark: SparkSession, config: Dict):
     source_table = config["source_table"]
     summary_table = config["destination_table"]
     latest_table = config["latest_history_table"]
+    hist_rpt_dt_table = config["hist_rpt_dt_table"]
     tracker_table = (
         config.get("watermark_tracker_table")
         or main_pipeline.get_watermark_tracker_table(config)
@@ -281,7 +281,7 @@ def reset_tables(spark: SparkSession, config: Dict):
     spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {namespace}")
     spark.sql("CREATE NAMESPACE IF NOT EXISTS temp_catalog.checkpointdb")
 
-    for table in [source_table, summary_table, latest_table, tracker_table]:
+    for table in [source_table, summary_table, latest_table, hist_rpt_dt_table, tracker_table]:
         spark.sql(f"DROP TABLE IF EXISTS {table}")
 
     for temp_case in ["case_1", "case_2", "case_3a", "case_3b", "case_3d_month", "case_3d_future", "case_4"]:
@@ -317,6 +317,22 @@ def reset_tables(spark: SparkSession, config: Dict):
         """
     )
 
+    spark.sql(
+        f"""
+        CREATE TABLE {hist_rpt_dt_table} (
+            cons_acct_key BIGINT,
+            soft_del_cd STRING,
+            acct_dt DATE,
+            base_ts TIMESTAMP,
+            insert_dt TIMESTAMP,
+            update_dt TIMESTAMP,
+            insert_time STRING,
+            update_time STRING
+        )
+        USING iceberg
+        """
+    )
+
 
 def month_start(month: str) -> date:
     year, mon = month.split("-")
@@ -340,7 +356,7 @@ def build_source_row(
     base_ts: datetime,
     balance: int,
     actual_payment: int,
-    soft_del_cd: str = "0",
+    soft_del_cd: str = "",
     credit_limit: int = 10000,
     days_past_due: int = 0,
     past_due: int = 0,
@@ -408,7 +424,7 @@ def build_summary_row(
     past_due: int = 0,
     asset_class: str = "A",
     payment_rating: str = "0",
-    soft_del_cd: str = "0",
+    soft_del_cd: str = "",
     balance_history: Optional[List[Optional[int]]] = None,
     payment_history: Optional[List[Optional[int]]] = None,
     credit_history: Optional[List[Optional[int]]] = None,
@@ -589,6 +605,91 @@ def assert_watermark_tracker_consistent(spark: SparkSession, config: Dict):
         )
 
 
+def assert_deletion_aware_invariants(spark: SparkSession, config: Dict):
+    summary_table = config["destination_table"]
+    latest_table = config["latest_history_table"]
+    pk = config["primary_column"]
+    prt = config["partition_column"]
+
+    if not spark.catalog.tableExists(summary_table):
+        raise AssertionError(f"Summary table not found: {summary_table}")
+    if not spark.catalog.tableExists(latest_table):
+        raise AssertionError(f"Latest summary table not found: {latest_table}")
+
+    summary_cols = set(spark.table(summary_table).columns)
+    latest_cols = set(spark.table(latest_table).columns)
+    if "soft_del_cd" not in summary_cols:
+        raise AssertionError(f"'soft_del_cd' missing in summary table: {summary_table}")
+    if "soft_del_cd" not in latest_cols:
+        raise AssertionError(f"'soft_del_cd' missing in latest summary table: {latest_table}")
+
+    dup_latest = (
+        spark.table(latest_table)
+        .groupBy(pk)
+        .count()
+        .filter(F.col("count") > 1)
+        .count()
+    )
+    if dup_latest != 0:
+        raise AssertionError(f"latest_summary has duplicate account keys: {dup_latest}")
+
+    # Deletion-aware invariant:
+    # If latest_summary row is soft-deleted, that account must not still have
+    # any active (non-deleted) row in summary.
+    deleted_latest_with_active_summary = spark.sql(
+        f"""
+        SELECT COUNT(1) AS cnt
+        FROM {latest_table} l
+        INNER JOIN (
+            SELECT DISTINCT {pk}
+            FROM {summary_table}
+            WHERE COALESCE(soft_del_cd, '') NOT IN ('1', '4')
+        ) a
+          ON l.{pk} = a.{pk}
+        WHERE COALESCE(l.soft_del_cd, '') IN ('1', '4')
+        """
+    ).first()["cnt"]
+    if deleted_latest_with_active_summary != 0:
+        raise AssertionError(
+            "latest_summary has deleted rows for accounts that still have active rows in summary "
+            f"(count={deleted_latest_with_active_summary})"
+        )
+
+    # For non-deleted latest rows, month should match max active month in summary.
+    latest_active_month_mismatch = spark.sql(
+        f"""
+        SELECT COUNT(1) AS cnt
+        FROM (
+            SELECT {pk}, MAX({prt}) AS max_active_month
+            FROM {summary_table}
+            WHERE COALESCE(soft_del_cd, '') NOT IN ('1', '4')
+            GROUP BY {pk}
+        ) s
+        INNER JOIN {latest_table} l
+          ON s.{pk} = l.{pk}
+        WHERE COALESCE(l.soft_del_cd, '') NOT IN ('1', '4')
+          AND l.{prt} <> s.max_active_month
+        """
+    ).first()["cnt"]
+    if latest_active_month_mismatch != 0:
+        raise AssertionError(
+            "latest_summary active month mismatch vs summary max active month "
+            f"(count={latest_active_month_mismatch})"
+        )
+
+
+_ORIG_RUN_PIPELINE = main_pipeline.run_pipeline
+
+
+def _run_pipeline_with_deletion_assertions(spark: SparkSession, config: Dict, *args, **kwargs):
+    result = _ORIG_RUN_PIPELINE(spark, config, *args, **kwargs)
+    assert_deletion_aware_invariants(spark, config)
+    return result
+
+
+main_pipeline.run_pipeline = _run_pipeline_with_deletion_assertions
+
+
 __all__ = [
     "create_spark_session",
     "load_main_test_config",
@@ -600,5 +701,6 @@ __all__ = [
     "write_summary_rows",
     "fetch_single_row",
     "assert_watermark_tracker_consistent",
+    "assert_deletion_aware_invariants",
     "main_pipeline",
 ]

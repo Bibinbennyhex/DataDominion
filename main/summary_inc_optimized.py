@@ -31,13 +31,9 @@ AVG_RECORD_SIZE_BYTES = 200
 SNAPSHOT_INTERVAL = 12
 MAX_FILE_SIZE = 256
 HISTORY_LENGTH = 36
-CASE_TEMP_BUCKET_COUNT = 64
 TRACKER_SOURCE_SUMMARY = "summary"
 TRACKER_SOURCE_LATEST_SUMMARY = "latest_summary"
 TRACKER_SOURCE_COMMITTED = "committed_ingestion_watermark"
-TRACKER_STATUS_RUNNING = "RUNNING"
-TRACKER_STATUS_SUCCESS = "SUCCESS"
-TRACKER_STATUS_FAILURE = "FAILURE"
 SOFT_DELETE_COLUMN = "soft_del_cd"
 SOFT_DELETE_CODES = ["1", "4"]
 
@@ -74,383 +70,10 @@ def _ensure_watermark_tracker_table(spark: SparkSession, tracker_table: str) -> 
                 source_table STRING,
                 max_base_ts TIMESTAMP,
                 max_rpt_as_of_mo STRING,
-                updated_at TIMESTAMP,
-                previous_successful_snapshot_id BIGINT,
-                current_snapshot_id BIGINT,
-                status STRING,
-                run_id STRING,
-                error_message STRING
+                updated_at TIMESTAMP
             )
             USING iceberg
         """
-    )
-    existing_cols = set(spark.table(tracker_table).columns)
-    required_cols = {
-        "previous_successful_snapshot_id": "BIGINT",
-        "current_snapshot_id": "BIGINT",
-        "status": "STRING",
-        "run_id": "STRING",
-        "error_message": "STRING",
-    }
-    for col_name, data_type in required_cols.items():
-        if col_name not in existing_cols:
-            spark.sql(f"ALTER TABLE {tracker_table} ADD COLUMN {col_name} {data_type}")
-
-
-def _capture_table_state(
-    spark: SparkSession,
-    table_name: str,
-    partition_col: str,
-    ts_col: str,
-) -> Dict[str, Optional[Any]]:
-    state = {
-        "max_base_ts": None,
-        "max_rpt_as_of_mo": None,
-        "snapshot_id": None,
-    }
-    if not spark.catalog.tableExists(table_name):
-        return state
-
-    stats = (
-        spark.table(table_name)
-        .agg(
-            F.max(F.col(ts_col)).alias("max_base_ts"),
-            F.max(F.col(partition_col)).alias("max_rpt_as_of_mo"),
-        )
-        .first()
-    )
-    state["max_base_ts"] = stats["max_base_ts"]
-    state["max_rpt_as_of_mo"] = stats["max_rpt_as_of_mo"]
-
-    try:
-        snap = spark.sql(
-            f"""
-                SELECT snapshot_id
-                FROM {table_name}.snapshots
-                ORDER BY committed_at DESC
-                LIMIT 1
-            """
-        ).collect()
-        if snap:
-            state["snapshot_id"] = snap[0]["snapshot_id"]
-    except Exception:
-        # Table may exist without snapshots yet in some early lifecycle states.
-        pass
-
-    return state
-
-
-def _read_tracker_rows(spark: SparkSession, tracker_table: str) -> Dict[str, Dict[str, Any]]:
-    if not spark.catalog.tableExists(tracker_table):
-        return {}
-    rows = spark.table(tracker_table).collect()
-    return {row["source_name"]: row.asDict() for row in rows}
-
-
-def _upsert_tracker_rows(
-    spark: SparkSession,
-    tracker_table: str,
-    rows: List[Tuple[Any, ...]],
-) -> None:
-    update_df = spark.createDataFrame(
-        rows,
-        schema=(
-            "source_name STRING, source_table STRING, max_base_ts TIMESTAMP, "
-            "max_rpt_as_of_mo STRING, updated_at TIMESTAMP, "
-            "previous_successful_snapshot_id BIGINT, current_snapshot_id BIGINT, "
-            "status STRING, run_id STRING, error_message STRING"
-        ),
-    )
-    update_df.createOrReplaceTempView("watermark_tracker_updates")
-    spark.sql(
-        f"""
-            MERGE INTO {tracker_table} t
-            USING watermark_tracker_updates u
-            ON t.source_name = u.source_name
-            WHEN MATCHED THEN UPDATE SET *
-            WHEN NOT MATCHED THEN INSERT *
-        """
-    )
-
-
-def _capture_run_snapshot_states(spark: SparkSession, config: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    prt = config["partition_column"]
-    ts = config["max_identifier_column"]
-    summary_table = config["destination_table"]
-    latest_summary_table = config["latest_history_table"]
-    return {
-        TRACKER_SOURCE_SUMMARY: _capture_table_state(spark, summary_table, prt, ts),
-        TRACKER_SOURCE_LATEST_SUMMARY: _capture_table_state(spark, latest_summary_table, prt, ts),
-    }
-
-
-def log_current_snapshot_state(spark: SparkSession, config: Dict[str, Any], label: str) -> Dict[str, Dict[str, Any]]:
-    states = _capture_run_snapshot_states(spark, config)
-    logger.info(f"{label} snapshot state:")
-    logger.info(
-        f"  summary: snapshot_id={states[TRACKER_SOURCE_SUMMARY]['snapshot_id']}, "
-        f"max_base_ts={states[TRACKER_SOURCE_SUMMARY]['max_base_ts']}, "
-        f"max_month={states[TRACKER_SOURCE_SUMMARY]['max_rpt_as_of_mo']}"
-    )
-    logger.info(
-        f"  latest_summary: snapshot_id={states[TRACKER_SOURCE_LATEST_SUMMARY]['snapshot_id']}, "
-        f"max_base_ts={states[TRACKER_SOURCE_LATEST_SUMMARY]['max_base_ts']}, "
-        f"max_month={states[TRACKER_SOURCE_LATEST_SUMMARY]['max_rpt_as_of_mo']}"
-    )
-    return states
-
-
-def _parse_catalog_and_identifier(table_name: str) -> Tuple[str, str]:
-    parts = table_name.split(".")
-    if len(parts) < 2:
-        raise ValueError(f"Invalid table name for rollback: {table_name}")
-    catalog = parts[0]
-    identifier = ".".join(parts[1:])
-    return catalog, identifier
-
-
-def _rollback_table_to_snapshot(
-    spark: SparkSession,
-    table_name: str,
-    snapshot_id: Optional[Any],
-) -> bool:
-    """
-    Rollback a single Iceberg table to a given snapshot id.
-    Returns True when rollback statement executed successfully.
-    """
-    if snapshot_id is None:
-        logger.warning(f"Rollback skipped for {table_name}: start snapshot is NULL")
-        return False
-    if not spark.catalog.tableExists(table_name):
-        logger.warning(f"Rollback skipped for {table_name}: table does not exist")
-        return False
-
-    catalog, identifier = _parse_catalog_and_identifier(table_name)
-    snapshot_id_int = int(snapshot_id)
-
-    # Try named-argument call first, then positional fallback.
-    try:
-        spark.sql(
-            f"""
-                CALL {catalog}.system.rollback_to_snapshot(
-                    table => '{identifier}',
-                    snapshot_id => {snapshot_id_int}
-                )
-            """
-        )
-        return True
-    except Exception:
-        spark.sql(
-            f"CALL {catalog}.system.rollback_to_snapshot('{identifier}', {snapshot_id_int})"
-        )
-        return True
-
-
-def rollback_tables_to_run_start(
-    spark: SparkSession,
-    config: Dict[str, Any],
-    start_states: Dict[str, Dict[str, Any]],
-) -> Dict[str, str]:
-    """
-    Best-effort rollback for summary and latest_summary to their pre-run snapshots.
-    Returns per-table status messages.
-    """
-    statuses: Dict[str, str] = {}
-    table_map = {
-        TRACKER_SOURCE_SUMMARY: config["destination_table"],
-        TRACKER_SOURCE_LATEST_SUMMARY: config["latest_history_table"],
-    }
-
-    for source_name, table_name in table_map.items():
-        start_snapshot = start_states.get(source_name, {}).get("snapshot_id")
-        try:
-            executed = _rollback_table_to_snapshot(spark, table_name, start_snapshot)
-            if executed:
-                statuses[source_name] = f"ROLLED_BACK_TO_{start_snapshot}"
-                logger.info(
-                    f"Rollback complete for {source_name} ({table_name}) "
-                    f"to snapshot_id={start_snapshot}"
-                )
-            else:
-                statuses[source_name] = f"SKIPPED_START_SNAPSHOT_{start_snapshot}"
-        except Exception as rollback_error:
-            statuses[source_name] = f"ROLLBACK_FAILED_{rollback_error}"
-            logger.error(
-                f"Rollback failed for {source_name} ({table_name}) "
-                f"to snapshot_id={start_snapshot}: {rollback_error}"
-            )
-
-    return statuses
-
-
-def mark_run_started(
-    spark: SparkSession,
-    config: Dict[str, Any],
-    run_id: str,
-    start_states: Dict[str, Dict[str, Any]],
-) -> None:
-    tracker_table = get_watermark_tracker_table(config)
-    _ensure_watermark_tracker_table(spark, tracker_table)
-    existing = _read_tracker_rows(spark, tracker_table)
-
-    summary_table = config["destination_table"]
-    latest_summary_table = config["latest_history_table"]
-    now = datetime.utcnow()
-
-    update_rows = []
-    for source_name, source_table in [
-        (TRACKER_SOURCE_SUMMARY, summary_table),
-        (TRACKER_SOURCE_LATEST_SUMMARY, latest_summary_table),
-    ]:
-        existing_row = existing.get(source_name, {})
-        prev_success_id = existing_row.get("previous_successful_snapshot_id")
-        if prev_success_id is None and existing_row.get("status") == TRACKER_STATUS_SUCCESS:
-            prev_success_id = existing_row.get("current_snapshot_id")
-        state = start_states[source_name]
-        update_rows.append(
-            (
-                source_name,
-                source_table,
-                state["max_base_ts"],
-                state["max_rpt_as_of_mo"],
-                now,
-                prev_success_id,
-                state["snapshot_id"],
-                TRACKER_STATUS_RUNNING,
-                run_id,
-                None,
-            )
-        )
-
-    committed_existing = existing.get(TRACKER_SOURCE_COMMITTED, {})
-    committed_ts = committed_existing.get("max_base_ts")
-    committed_month = committed_existing.get("max_rpt_as_of_mo")
-    if committed_ts is None:
-        committed_ts = _safe_min_datetime(
-            start_states[TRACKER_SOURCE_SUMMARY]["max_base_ts"],
-            start_states[TRACKER_SOURCE_LATEST_SUMMARY]["max_base_ts"],
-        )
-    if committed_month is None:
-        committed_month = _safe_min_month(
-            start_states[TRACKER_SOURCE_SUMMARY]["max_rpt_as_of_mo"],
-            start_states[TRACKER_SOURCE_LATEST_SUMMARY]["max_rpt_as_of_mo"],
-        )
-    update_rows.append(
-        (
-            TRACKER_SOURCE_COMMITTED,
-            config["source_table"],
-            committed_ts,
-            committed_month,
-            now,
-            committed_existing.get("previous_successful_snapshot_id"),
-            committed_existing.get("current_snapshot_id"),
-            TRACKER_STATUS_RUNNING,
-            run_id,
-            None,
-        )
-    )
-
-    _upsert_tracker_rows(spark, tracker_table, update_rows)
-    logger.info(f"Marked tracker RUNNING for run_id={run_id}")
-
-
-def finalize_run_tracking(
-    spark: SparkSession,
-    config: Dict[str, Any],
-    run_id: str,
-    start_states: Dict[str, Dict[str, Any]],
-    success: bool,
-    error_message: Optional[str] = None,
-) -> None:
-    tracker_table = get_watermark_tracker_table(config)
-    _ensure_watermark_tracker_table(spark, tracker_table)
-    existing = _read_tracker_rows(spark, tracker_table)
-    end_states = _capture_run_snapshot_states(spark, config)
-    now = datetime.utcnow()
-
-    status = TRACKER_STATUS_SUCCESS if success else TRACKER_STATUS_FAILURE
-    update_rows = []
-
-    for source_name, source_table in [
-        (TRACKER_SOURCE_SUMMARY, config["destination_table"]),
-        (TRACKER_SOURCE_LATEST_SUMMARY, config["latest_history_table"]),
-    ]:
-        existing_row = existing.get(source_name, {})
-        if success:
-            prev_success_id = start_states[source_name]["snapshot_id"]
-        else:
-            prev_success_id = existing_row.get("previous_successful_snapshot_id")
-            if prev_success_id is None and existing_row.get("status") == TRACKER_STATUS_SUCCESS:
-                prev_success_id = existing_row.get("current_snapshot_id")
-
-        update_rows.append(
-            (
-                source_name,
-                source_table,
-                end_states[source_name]["max_base_ts"],
-                end_states[source_name]["max_rpt_as_of_mo"],
-                now,
-                prev_success_id,
-                end_states[source_name]["snapshot_id"],
-                status,
-                run_id,
-                None if success else (error_message[:500] if error_message else "pipeline_failed"),
-            )
-        )
-
-    committed_existing = existing.get(TRACKER_SOURCE_COMMITTED, {})
-    if success:
-        committed_ts = _safe_min_datetime(
-            end_states[TRACKER_SOURCE_SUMMARY]["max_base_ts"],
-            end_states[TRACKER_SOURCE_LATEST_SUMMARY]["max_base_ts"],
-        )
-        committed_month = _safe_min_month(
-            end_states[TRACKER_SOURCE_SUMMARY]["max_rpt_as_of_mo"],
-            end_states[TRACKER_SOURCE_LATEST_SUMMARY]["max_rpt_as_of_mo"],
-        )
-    else:
-        committed_ts = committed_existing.get("max_base_ts")
-        committed_month = committed_existing.get("max_rpt_as_of_mo")
-
-    update_rows.append(
-        (
-            TRACKER_SOURCE_COMMITTED,
-            config["source_table"],
-            committed_ts,
-            committed_month,
-            now,
-            committed_existing.get("previous_successful_snapshot_id"),
-            committed_existing.get("current_snapshot_id"),
-            status,
-            run_id,
-            None if success else (error_message[:500] if error_message else "pipeline_failed"),
-        )
-    )
-
-    _upsert_tracker_rows(spark, tracker_table, update_rows)
-    logger.info(
-        f"Finalized tracker for run_id={run_id}, status={status}, "
-        f"tracker_table={tracker_table}"
-    )
-
-
-def refresh_watermark_tracker(
-    spark: SparkSession,
-    config: Dict[str, Any],
-    mark_committed: bool = True,
-) -> None:
-    """
-    Backward-compatible tracker refresh.
-    """
-    run_id = f"legacy_{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
-    start_states = _capture_run_snapshot_states(spark, config)
-    finalize_run_tracking(
-        spark=spark,
-        config=config,
-        run_id=run_id,
-        start_states=start_states,
-        success=bool(mark_committed),
-        error_message=None if mark_committed else "legacy_refresh_non_committed",
     )
 
 
@@ -612,26 +235,6 @@ def validate_config(config: Dict[str, Any]) -> bool:
     return True
 
 
-def ensure_soft_delete_columns(spark: SparkSession, config: Dict[str, Any]) -> None:
-    """
-    Ensure summary/latest_summary tables both expose soft_del_cd.
-    """
-    summary_table = config["destination_table"]
-    latest_summary_table = config["latest_history_table"]
-
-    if spark.catalog.tableExists(summary_table):
-        summary_cols = spark.table(summary_table).columns
-        if SOFT_DELETE_COLUMN not in summary_cols:
-            logger.info(f"Adding {SOFT_DELETE_COLUMN} to {summary_table}")
-            spark.sql(f"ALTER TABLE {summary_table} ADD COLUMN {SOFT_DELETE_COLUMN} STRING")
-
-    if spark.catalog.tableExists(latest_summary_table):
-        latest_cols = spark.table(latest_summary_table).columns
-        if SOFT_DELETE_COLUMN not in latest_cols:
-            logger.info(f"Adding {SOFT_DELETE_COLUMN} to {latest_summary_table}")
-            spark.sql(f"ALTER TABLE {latest_summary_table} ADD COLUMN {SOFT_DELETE_COLUMN} STRING")
-
-
 def create_spark_session(app_name: str, spark_config: Dict[str, Any]):
     spark_builder = SparkSession.builder.appName(app_name)
     for key,value in spark_config.items():
@@ -737,80 +340,6 @@ def get_write_partitions(
     return parts
 
 
-def align_for_summary_merge(
-    spark: SparkSession,
-    df,
-    config: Dict[str, Any],
-    stage: str,
-    expected_rows: Optional[int] = None,
-):
-    """
-    Align merge source layout with summary table distribution:
-    repartition on (partition_column, primary_column) and sort within partition.
-    """
-    pk = config["primary_column"]
-    prt = config["partition_column"]
-    write_parts = get_write_partitions(spark, config, expected_rows=expected_rows, stage=stage)
-    return df.repartition(write_parts, F.col(prt), F.col(pk)).sortWithinPartitions(prt, pk)
-
-
-def write_case_table_bucketed(
-    spark: SparkSession,
-    df,
-    table_name: str,
-    config: Dict[str, Any],
-    stage: str,
-    expected_rows: Optional[int] = None,
-) -> None:
-    """
-    Materialize case_* table as Iceberg table partitioned by month and bucketed by account key.
-    """
-    pk = config["primary_column"]
-    prt = config["partition_column"]
-    bucket_count = int(config.get("case_temp_bucket_count", CASE_TEMP_BUCKET_COUNT))
-
-    if pk not in df.columns or prt not in df.columns:
-        raise ValueError(f"{table_name} write requires columns '{pk}' and '{prt}'")
-
-    aligned_df = align_for_summary_merge(
-        spark=spark,
-        df=df,
-        config=config,
-        stage=stage,
-        expected_rows=expected_rows,
-    )
-    temp_view = f"_tmp_{table_name.replace('.', '_')}_{int(time.time() * 1000)}"
-    namespace = table_name.rsplit(".", 1)[0]
-
-    spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {namespace}")
-    aligned_df.createOrReplaceTempView(temp_view)
-    create_sql = f"""
-        CREATE TABLE {table_name}
-        USING iceberg
-        PARTITIONED BY ({prt}, bucket({bucket_count}, {pk}))
-        TBLPROPERTIES (
-            'write.distribution-mode'='hash',
-            'write.merge.distribution-mode'='hash'
-        )
-        AS SELECT * FROM {temp_view}
-    """
-    max_retries = 3
-    try:
-        for attempt in range(1, max_retries + 1):
-            spark.sql(f"DROP TABLE IF EXISTS {table_name}")
-            try:
-                spark.sql(create_sql)
-                break
-            except Exception as e:
-                msg = str(e).lower()
-                if "already exists" in msg and attempt < max_retries:
-                    time.sleep(1.0 * attempt)
-                    continue
-                raise
-    finally:
-        spark.catalog.dropTempView(temp_view)
-
-
 def build_balanced_month_chunks(
     month_weights: List[Tuple[str, float]],
     overflow_ratio: float = 0.10,
@@ -858,31 +387,7 @@ def build_balanced_month_chunks(
     return chunks
 
 
-def build_month_chunks_from_df(
-    df,
-    prt: str,
-    overflow_ratio: float = 0.10,
-) -> List[List[str]]:
-    """
-    Build balanced month chunks from a dataframe using per-month row counts as weights.
-    """
-    if df is None:
-        return []
-
-    month_weights = [
-        (r[prt], float(r["count"]))
-        for r in df.groupBy(prt).count().select(prt, "count").collect()
-        if r[prt] is not None and r["count"] is not None and r["count"] > 0
-    ]
-
-    month_chunks = build_balanced_month_chunks(month_weights, overflow_ratio=overflow_ratio)
-    if month_chunks:
-        return month_chunks
-
-    return [[r[prt]] for r in df.select(prt).distinct().orderBy(prt).collect() if r[prt] is not None]
-
-
-def prepare_source_data(df, date_df, config: Dict[str, Any]):
+def prepare_source_data(df, config: Dict[str, Any]):
     """
     Prepare source data with:
     1. Column mappings (rename source -> destination)
@@ -896,7 +401,6 @@ def prepare_source_data(df, date_df, config: Dict[str, Any]):
     pk = config['primary_column']
     prt = config['partition_column']
     ts = config['max_identifier_column']
-    pdt = config['primary_date_column']
     
     result = df
     deduplication_trackers = ['insert_ts','update_ts']
@@ -967,80 +471,8 @@ def prepare_source_data(df, date_df, config: Dict[str, Any]):
         .drop("_rn", *deduplication_trackers)
     )
     
-    date_df = date_df.withColumn(prt, F.date_format(F.col(pdt), "yyyy-MM"))
-    hist_dedup_order_cols = [ts, "insert_dt", "update_dt", "insert_time", "update_time"]
-    hist_dedup_order_exprs = [
-        F.col(col_name).desc()
-        for col_name in hist_dedup_order_cols
-        if col_name in date_df.columns
-    ]
-    if not hist_dedup_order_exprs:
-        hist_dedup_order_exprs = [F.col(ts).desc()]
-
-    date_df_window_spec = Window.partitionBy(pk, prt).orderBy(*hist_dedup_order_exprs)
-
-    date_df = (
-        date_df
-        .withColumn("_rn", F.row_number().over(date_df_window_spec))
-        .filter(F.col("_rn") == 1)
-        .drop("_rn")
-    )
-
-    r = result.alias("r")
-    d = F.broadcast(date_df.alias("d"))
-    delete_codes_sql = ",".join([f"'{code}'" for code in SOFT_DELETE_CODES])
-
-    result_final = r.join(
-        d,
-        (
-            (F.col(f"r.{pk}") == F.col(f"d.{pk}")) &
-            (F.col(f"r.{prt}") == F.col(f"d.{prt}"))
-        ),
-        "left"
-    ).select(
-        *[F.col(f"r.{c}") for c in result.columns if c not in [pdt,"soft_del_cd"]],
-        F.expr(
-            f"""
-                CASE
-                    WHEN d.{pk} IS NULL
-                    THEN r.{pdt}
-                    WHEN COALESCE(r.soft_del_cd, '') IN ({delete_codes_sql})
-                        AND COALESCE(d.soft_del_cd, '') IN ({delete_codes_sql})
-                    THEN NULL
-                    WHEN COALESCE(r.soft_del_cd, '') NOT IN ({delete_codes_sql})
-                        AND (COALESCE(d.soft_del_cd, '') IN ({delete_codes_sql}) OR r.{pdt} > d.{pdt})
-                    THEN r.{pdt}
-                    WHEN d.{pk} IS NOT NULL
-                        AND COALESCE(d.soft_del_cd, '') NOT IN ({delete_codes_sql})
-                        AND (COALESCE(r.soft_del_cd, '') IN ({delete_codes_sql}) OR d.{pdt} > r.{pdt})
-                    THEN d.{pdt}
-                    ELSE r.{pdt}
-                END
-            """
-        ).alias(pdt),
-        F.expr(
-            f"""
-                CASE
-                    WHEN d.{pk} IS NULL
-                    THEN r.soft_del_cd
-                    WHEN COALESCE(r.soft_del_cd, '') IN ({delete_codes_sql})
-                        AND COALESCE(d.soft_del_cd, '') IN ({delete_codes_sql})
-                    THEN r.soft_del_cd
-                    WHEN COALESCE(r.soft_del_cd, '') NOT IN ({delete_codes_sql})
-                        AND (COALESCE(d.soft_del_cd, '') IN ({delete_codes_sql}) OR r.{pdt} > d.{pdt})
-                    THEN r.soft_del_cd
-                    WHEN d.{pk} IS NOT NULL
-                        AND COALESCE(d.soft_del_cd, '') NOT IN ({delete_codes_sql})
-                        AND (COALESCE(r.soft_del_cd, '') IN ({delete_codes_sql}) OR d.{pdt} > r.{pdt})
-                    THEN d.soft_del_cd
-                    ELSE r.soft_del_cd
-                END
-            """
-        ).alias("soft_del_cd")
-    )
-
     logger.info("Source data preparation complete")
-    return result_final
+    return result
 
 
 def load_and_classify_accounts(spark: SparkSession, config: Dict[str, Any]):
@@ -1064,8 +496,6 @@ def load_and_classify_accounts(spark: SparkSession, config: Dict[str, Any]):
     source_table = config['source_table']
     destination_table = config['destination_table']
     latest_summary_table = config['latest_history_table']
-    hist_rpt_dt_table = config['hist_rpt_dt_table']
-    hist_rpt_dt_cols = config['hist_rpt_dt_cols']
 
     if spark.catalog.tableExists(destination_table):
         fallback_max_base_ts = spark.table(destination_table) \
@@ -1116,14 +546,8 @@ def load_and_classify_accounts(spark: SparkSession, config: Dict[str, Any]):
     
     logging.info(f"Reading from {source_table} - ({prt} < {next_month}) & ({ts} > {effective_max_base_ts}")
 
-    # Load account_hist_rpt_dt
-    logger.info(f"Loading account_hist_rpt_dt from {hist_rpt_dt_table}")
-    hist_rpt_dt_df = spark.read.table(hist_rpt_dt_table).select(*hist_rpt_dt_cols).filter(F.col(ts) > F.lit(effective_max_base_ts))
-    
-    logging.info(f"Reading from {hist_rpt_dt_table} - {ts} > {effective_max_base_ts}")
-
     # Prepare source data (mappings, transformations, deduplication)
-    accounts_prepared = prepare_source_data(accounts_df, hist_rpt_dt_df, config)
+    accounts_prepared = prepare_source_data(accounts_df, config)
 
     # Add month integer for comparison
     accounts_prepared = accounts_prepared.withColumn(
@@ -1132,7 +556,7 @@ def load_and_classify_accounts(spark: SparkSession, config: Dict[str, Any]):
     )
     accounts_prepared = accounts_prepared.withColumn(
         "_is_soft_delete",
-        F.coalesce(F.col(SOFT_DELETE_COLUMN), F.lit("")).isin(*SOFT_DELETE_CODES)
+        F.col(SOFT_DELETE_COLUMN).isin(*SOFT_DELETE_CODES)
     )
 
     # Load summary metadata (small - can broadcast)
@@ -1340,19 +764,17 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any], exp
     # Create temp view for affected keys
     affected_keys.createOrReplaceTempView("case_ii_affected_keys")
 
-    delete_codes_sql = ",".join([f"'{code}'" for code in SOFT_DELETE_CODES])
+    # Build column list
+    cols_select = ", ".join([pk, prt] + history_cols)
 
-    # Use latest_summary only (one row per account) and exclude deleted contexts.
+    # Get data from latest_summary for the affected_keys
     latest_for_affected_sql = f"""
-        SELECT {', '.join([f"l.{c}" for c in [pk, prt] + history_cols])}
-        FROM {latest_summary_table} l
-        WHERE l.{pk} IN (SELECT {pk} FROM case_ii_affected_keys)
-          AND COALESCE(l.{SOFT_DELETE_COLUMN}, '') NOT IN ({delete_codes_sql})
+        SELECT {cols_select}
+        FROM {latest_summary_table} s
+        WHERE s.{pk} IN (SELECT {pk} FROM case_ii_affected_keys)
     """
-    latest_for_affected = spark.sql(latest_for_affected_sql).dropDuplicates([pk, prt]).withColumn(
-        "prev_month_int",
-        F.expr(month_to_int_expr(prt))
-    )
+
+    latest_for_affected = spark.sql(latest_for_affected_sql)
 
     # Collect peer forward entries into MAP for gap filling (Chaining)
     # Map Key: month_int, Map Value: Struct(val_col1, val_col2...)
@@ -1376,26 +798,27 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any], exp
         )
     )
 
-    # Build SQL for array shifting (resolved accounts with non-deleted latest context)
+    # Create temp views for SQL
+    case_ii_df.createOrReplaceTempView("case_ii_records")
+    latest_for_affected.createOrReplaceTempView("latest_summary_affected")
+
+    # Build SQL for array shifting
     shift_exprs = []
     for rc in rolling_columns:
         array_name = f"{rc['name']}_history"
         mapper_column = rc['mapper_column']
-        prepared_col = f"_prepared_{rc['name']}"
-        current_value_col = prepared_col if prepared_col in case_ii_df.columns else mapper_column
         val_col_name = f"val_{rc['name']}"
-        month_diff_expr = "(c.month_int - p.prev_month_int)"
 
         shift_expr = f"""
             CASE
-                WHEN {month_diff_expr} = 1 THEN
-                    slice(concat(array(c.{current_value_col}), p.{array_name}), 1, {history_len})
-                WHEN {month_diff_expr} > 1 THEN
+                WHEN c.MONTH_DIFF = 1 THEN
+                    slice(concat(array(c.{mapper_column}), p.{array_name}), 1, {history_len})
+                WHEN c.MONTH_DIFF > 1 THEN
                     slice(
                         concat(
-                            array(c.{current_value_col}),
+                            array(c.{mapper_column}),
                             transform(
-                                sequence(1, {month_diff_expr} - 1),
+                                sequence(1, c.MONTH_DIFF - 1),
                                 i -> c.peer_map[CAST(c.month_int - i AS INT)].{val_col_name}
                             ),
                             p.{array_name}
@@ -1403,7 +826,7 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any], exp
                         1, {history_len}
                     )
                 ELSE
-                    concat(array(c.{current_value_col}), array_repeat(NULL, {history_len - 1}))
+                    concat(array(c.{mapper_column}), array_repeat(NULL, {history_len - 1}))
             END as {array_name}
         """
         shift_exprs.append(shift_expr)
@@ -1426,50 +849,15 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any], exp
     current_cols = [c for c in case_ii_df.columns if c not in exclude_cols]
     current_select = ", ".join([f"c.{col}" for col in current_cols])
 
-    latest_context_keys = latest_for_affected.select(pk).distinct().withColumn("_has_latest_context", F.lit(1))
-    case_ii_with_context = case_ii_df.join(latest_context_keys, on=pk, how="left")
-    case_ii_resolved = case_ii_with_context.filter(F.col("_has_latest_context").isNotNull()).drop("_has_latest_context")
-    case_ii_unresolved = case_ii_with_context.filter(F.col("_has_latest_context").isNull()).drop("_has_latest_context")
+    sql = f"""
+        SELECT 
+            {current_select},
+            {', '.join(shift_exprs)}
+        FROM case_ii_records c
+        JOIN latest_summary_affected p ON c.{pk} = p.{pk}
+    """
 
-    result_parts = []
-
-    if not case_ii_resolved.isEmpty():
-        case_ii_resolved.createOrReplaceTempView("case_ii_records")
-        latest_for_affected.createOrReplaceTempView("latest_summary_affected")
-        sql = f"""
-            SELECT 
-                {current_select},
-                {', '.join(shift_exprs)}
-            FROM case_ii_records c
-            JOIN latest_summary_affected p ON c.{pk} = p.{pk}
-        """
-        result_parts.append(spark.sql(sql))
-
-    # Accounts with no non-deleted latest context are treated as Case I style initialization.
-    if not case_ii_unresolved.isEmpty():
-        unresolved_select_exprs = [F.col(c) for c in current_cols]
-        for rc in rolling_columns:
-            array_name = f"{rc['name']}_history"
-            mapper_column = rc['mapper_column']
-            prepared_col = f"_prepared_{rc['name']}"
-            value_col = prepared_col if prepared_col in case_ii_unresolved.columns else mapper_column
-            value_type = case_ii_unresolved.schema[value_col].dataType
-            unresolved_select_exprs.append(
-                F.concat(
-                    F.array(F.col(value_col)),
-                    F.array_repeat(F.lit(None).cast(value_type), history_len - 1)
-                ).alias(array_name)
-            )
-        result_parts.append(case_ii_unresolved.select(*unresolved_select_exprs))
-
-    if not result_parts:
-        logger.warning("No Case II rows generated after context split")
-        return
-
-    if len(result_parts) == 1:
-        result = result_parts[0]
-    else:
-        result = result_parts[0].unionByName(result_parts[1])
+    result = spark.sql(sql)
 
     # Generate grid columns
     for gc in grid_columns:
@@ -1490,14 +878,9 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any], exp
             )
         )
 
-    write_case_table_bucketed(
-        spark=spark,
-        df=result,
-        table_name="temp_catalog.checkpointdb.case_2",
-        config=config,
-        stage="case_2_temp",
-        expected_rows=expected_rows,
-    )
+    result.repartition(
+        get_write_partitions(spark, config, expected_rows=expected_rows, stage="case_2_temp")
+    ).writeTo("temp_catalog.checkpointdb.case_2").create()
 
     process_end_time = time.time()
     process_total_minutes = (process_end_time - process_start_time) / 60
@@ -1535,7 +918,6 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
     history_len = config.get('history_length', HISTORY_LENGTH)
     rolling_columns = config.get('rolling_columns', [])
     grid_columns = config.get('grid_columns', [])
-    delete_codes_sql = ",".join([f"'{code}'" for code in SOFT_DELETE_CODES])
 
     # Get affected accounts
     affected_accounts = case_iii_df.select(pk).distinct()
@@ -1589,14 +971,13 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
         SELECT {', '.join(summary_select_cols)}
         FROM {summary_table}
         WHERE {prt} >= '{earliest_partition}' AND {prt} <= '{latest_partition}'
-          AND COALESCE({SOFT_DELETE_COLUMN}, '') NOT IN ({delete_codes_sql})
     """
     summary_df = spark.sql(partition_filter_sql)
 
     logger.info(f"Applied partition filter: {prt} BETWEEN '{earliest_partition}' AND '{latest_partition}'")
 
     summary_filtered = summary_df.join(
-        affected_accounts,
+        F.broadcast(affected_accounts),
         pk,
         "left_semi"
     )
@@ -1768,14 +1149,9 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
         .drop("_rn")
     )
 
-    write_case_table_bucketed(
-        spark=spark,
-        df=new_backfill_rows,
-        table_name="temp_catalog.checkpointdb.case_3a",
-        config=config,
-        stage="case_3a_temp",
-        expected_rows=expected_rows,
-    )
+    new_backfill_rows.repartition(
+        get_write_partitions(spark, config, expected_rows=expected_rows, stage="case_3a_temp")
+    ).writeTo("temp_catalog.checkpointdb.case_3a").create()
 
     process_end_time = time.time()
     process_total_minutes = (process_end_time - process_start_time) / 60
@@ -1906,14 +1282,9 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
             )
 
     if backfill_updates_df is not None:
-        write_case_table_bucketed(
-            spark=spark,
-            df=backfill_updates_df,
-            table_name="temp_catalog.checkpointdb.case_3b",
-            config=config,
-            stage="case_3b_temp",
-            expected_rows=expected_rows,
-        )
+        backfill_updates_df.repartition(
+            get_write_partitions(spark, config, stage="case_3b_temp")
+        ).writeTo("temp_catalog.checkpointdb.case_3b").create()
         process_end_time = time.time()
         process_total_minutes = (process_end_time - process_start_time) / 60
         logger.info(f"Case III Part B Generated | Time Elapsed: {process_total_minutes:.2f} minutes")
@@ -1962,6 +1333,7 @@ def process_case_iii_soft_delete(
     affected_accounts = case_iii_delete_df.select(pk).distinct()
 
     # Partition-pruned summary read around the delete month range.
+    # For soft delete we do not need months prior to min_backfill.
     backfill_range = case_iii_delete_df.agg(
         F.min(prt).alias("min_backfill_month"),
         F.max(prt).alias("max_backfill_month")
@@ -1972,15 +1344,8 @@ def process_case_iii_soft_delete(
     min_backfill_int = int(min_backfill[:4]) * 12 + int(min_backfill[5:7])
     max_backfill_int = int(max_backfill[:4]) * 12 + int(max_backfill[5:7])
 
-    earliest_needed_int = min_backfill_int - history_len
     latest_needed_int = max_backfill_int + history_len
-
-    earliest_year = earliest_needed_int // 12
-    earliest_month = earliest_needed_int % 12
-    if earliest_month == 0:
-        earliest_month = 12
-        earliest_year -= 1
-    earliest_partition = f"{earliest_year}-{earliest_month:02d}"
+    earliest_partition = min_backfill
 
     latest_year = latest_needed_int // 12
     latest_month = latest_needed_int % 12
@@ -1989,15 +1354,16 @@ def process_case_iii_soft_delete(
         latest_year -= 1
     latest_partition = f"{latest_year}-{latest_month:02d}"
 
-    summary_filtered = (
+    # Narrow read for delete-month rows (full row width needed for month-row update merge).
+    summary_delete_months = (
         spark.sql(
             f"""
                 SELECT *
                 FROM {summary_table}
-                WHERE {prt} >= '{earliest_partition}' AND {prt} <= '{latest_partition}'
+                WHERE {prt} >= '{min_backfill}' AND {prt} <= '{max_backfill}'
             """
         )
-        .join(affected_accounts, pk, "left_semi")
+        .join(F.broadcast(affected_accounts), pk, "left_semi")
         .withColumn("month_int", F.expr(month_to_int_expr(prt)))
     )
 
@@ -2005,15 +1371,17 @@ def process_case_iii_soft_delete(
     delete_existing = (
         case_iii_delete_df.alias("d")
         .join(
-            summary_filtered.select(pk, prt).alias("s"),
+            summary_delete_months.select(pk, prt).alias("s"),
             (F.col(f"d.{pk}") == F.col(f"s.{pk}")) & (F.col(f"d.{prt}") == F.col(f"s.{prt}")),
             "inner"
         )
         .select("d.*")
+        .persist(StorageLevel.DISK_ONLY)
     )
 
-    if delete_existing.isEmpty():
+    if delete_existing.limit(1).count() == 0:
         logger.info("No existing summary rows matched soft-delete records; nothing to update")
+        delete_existing.unpersist()
         return
 
     # ---------------------------------------------------------------------
@@ -2025,14 +1393,9 @@ def process_case_iii_soft_delete(
         F.col(ts),
         F.col(SOFT_DELETE_COLUMN),
     )
-    write_case_table_bucketed(
-        spark=spark,
-        df=delete_month_update_df,
-        table_name="temp_catalog.checkpointdb.case_3d_month",
-        config=config,
-        stage="case_3d_month_temp",
-        expected_rows=expected_rows,
-    )
+    delete_month_update_df.repartition(
+        get_write_partitions(spark, config, expected_rows=expected_rows, stage="case_3d_month_temp")
+    ).writeTo("temp_catalog.checkpointdb.case_3d_month").create()
     logger.info("Case III Soft Delete - Month-row updates generated")
 
     # ---------------------------------------------------------------------
@@ -2049,8 +1412,17 @@ def process_case_iii_soft_delete(
         )
     )
 
-    summary_future = summary_filtered.select(
-        pk, prt, ts, "month_int", *history_cols
+    # Narrow read for future patching (history columns only).
+    summary_future = (
+        spark.sql(
+            f"""
+                SELECT {pk}, {prt}, {ts}, {', '.join(history_cols)}
+                FROM {summary_table}
+                WHERE {prt} >= '{earliest_partition}' AND {prt} <= '{latest_partition}'
+            """
+        )
+        .join(F.broadcast(affected_accounts), pk, "left_semi")
+        .withColumn("month_int", F.expr(month_to_int_expr(prt)))
     )
 
     future_delete_joined = (
@@ -2126,17 +1498,14 @@ def process_case_iii_soft_delete(
                 )
             )
 
-        write_case_table_bucketed(
-            spark=spark,
-            df=future_delete_updates_df,
-            table_name="temp_catalog.checkpointdb.case_3d_future",
-            config=config,
-            stage="case_3d_future_temp",
-            expected_rows=expected_rows,
-        )
+        future_delete_updates_df.repartition(
+            get_write_partitions(spark, config, expected_rows=expected_rows, stage="case_3d_future_temp")
+        ).writeTo("temp_catalog.checkpointdb.case_3d_future").create()
         logger.info("Case III Soft Delete - Future month patches generated")
     else:
         logger.info("Case III Soft Delete - No future month patches required")
+
+    delete_existing.unpersist()
 
     process_end_time = time.time()
     logger.info(
@@ -2321,14 +1690,9 @@ def process_case_iv(spark: SparkSession, case_iv_df, case_i_result, config: Dict
         "inner"
     )
     
-    write_case_table_bucketed(
-        spark=spark,
-        df=result,
-        table_name="temp_catalog.checkpointdb.case_4",
-        config=config,
-        stage="case_4_temp",
-        expected_rows=expected_rows,
-    )
+    result.repartition(
+        get_write_partitions(spark, config, expected_rows=expected_rows, stage="case_4_temp")
+    ).writeTo("temp_catalog.checkpointdb.case_4").create()
 
     process_end_time = time.time()
     process_total_minutes = (process_end_time - process_start_time) / 60
@@ -2373,6 +1737,7 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
         case_3d_month_df = None
         case_3d_future_df = None
         month_chunks: List[List[str]] = []
+        soft_delete_month_chunks: List[List[str]] = []
 
         if spark.catalog.tableExists("temp_catalog.checkpointdb.case_3a"):
             case_3a_df = spark.read.table('temp_catalog.checkpointdb.case_3a')
@@ -2389,6 +1754,26 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
 
         if spark.catalog.tableExists("temp_catalog.checkpointdb.case_3d_future"):
             case_3d_future_df = spark.read.table("temp_catalog.checkpointdb.case_3d_future")
+            case3d_overflow_ratio = float(config.get("case3d_merge_overflow_ratio", 0.10))
+            case_3d_month_weights = [
+                (r[prt], float(r["weighted_load"]))
+                for r in (
+                    case_3d_future_df.groupBy(prt)
+                    .count()
+                    .withColumnRenamed("count", "weighted_load")
+                    .select(prt, "weighted_load")
+                    .collect()
+                )
+                if r[prt] is not None
+            ]
+            soft_delete_month_chunks = build_balanced_month_chunks(
+                case_3d_month_weights,
+                overflow_ratio=case3d_overflow_ratio,
+            )
+            if soft_delete_month_chunks:
+                logger.info(f"Case III soft-delete merge month chunks: {len(soft_delete_month_chunks)}")
+                for idx, months in enumerate(soft_delete_month_chunks, 1):
+                    logger.info(f"  Soft-delete chunk {idx}: months={months}")
 
         if case_3a_df is not None or case_3b_filtered_df is not None:
             case3b_weight = float(config.get("case3_merge_case3b_weight", 1.3))
@@ -2452,12 +1837,6 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
                     continue
 
                 case_3a_chunk_df = case_3a_df.filter(F.col(prt).isin(case_3a_chunk_months))
-                case_3a_chunk_df = align_for_summary_merge(
-                    spark=spark,
-                    df=case_3a_chunk_df,
-                    config=config,
-                    stage=f"summary_merge_case_3a_chunk_{idx}",
-                )
                 case_3a_chunk_df.createOrReplaceTempView("case_3a_chunk")
                 spark.sql(
                     f"""
@@ -2502,12 +1881,6 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
                     continue
 
                 case_3b_chunk_df = case_3b_filtered_df.filter(F.col(prt).isin(case_3b_chunk_months))
-                case_3b_chunk_df = align_for_summary_merge(
-                    spark=spark,
-                    df=case_3b_chunk_df,
-                    config=config,
-                    stage=f"summary_merge_case_3b_chunk_{idx}",
-                )
                 case_3b_chunk_df.createOrReplaceTempView("case_3b_chunk")
                 spark.sql(
                     f"""
@@ -2529,38 +1902,17 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
 
         process_start_time = time.time()
         if case_3d_month_df is not None:
-            case_3d_month_overflow = float(
-                config.get("case3d_month_merge_overflow_ratio", config.get("case3_merge_overflow_ratio", 0.10))
+            case_3d_month_df.createOrReplaceTempView("case_3d_month")
+            spark.sql(
+                f"""
+                    MERGE INTO {summary_table} s
+                    USING case_3d_month c
+                    ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
+                    WHEN MATCHED THEN UPDATE SET
+                        s.{SOFT_DELETE_COLUMN} = c.{SOFT_DELETE_COLUMN},
+                        s.{ts} = GREATEST(s.{ts}, c.{ts})
+                """
             )
-            case_3d_month_chunks = build_month_chunks_from_df(
-                case_3d_month_df,
-                prt,
-                overflow_ratio=case_3d_month_overflow,
-            )
-            logger.info(f"Case III Soft Delete Month merge chunks: {len(case_3d_month_chunks)}")
-            for idx, months in enumerate(case_3d_month_chunks, 1):
-                case_3d_month_chunk_df = case_3d_month_df.filter(F.col(prt).isin(months))
-                case_3d_month_chunk_df = align_for_summary_merge(
-                    spark=spark,
-                    df=case_3d_month_chunk_df,
-                    config=config,
-                    stage=f"summary_merge_case_3d_month_chunk_{idx}",
-                )
-                case_3d_month_chunk_df.createOrReplaceTempView("case_3d_month_chunk")
-                spark.sql(
-                    f"""
-                        MERGE INTO {summary_table} s
-                        USING case_3d_month_chunk c
-                        ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
-                        WHEN MATCHED THEN UPDATE SET
-                            s.{SOFT_DELETE_COLUMN} = c.{SOFT_DELETE_COLUMN},
-                            s.{ts} = GREATEST(s.{ts}, c.{ts})
-                    """
-                )
-                logger.info(
-                    f"MERGED - CASE III Soft Delete Month chunk {idx}/{len(case_3d_month_chunks)} "
-                    f"(months={months})"
-                )
             process_end_time = time.time()
             process_total_minutes = (process_end_time - process_start_time) / 60
             logger.info(f"Updated Summary | MERGED - CASE III Soft Delete Month Rows | Time Elapsed: {process_total_minutes:.2f} minutes")
@@ -2576,24 +1928,19 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
                 else:
                     soft_delete_set_exprs.append(f"s.{col_name} = c.{col_name}")
 
-            case_3d_future_overflow = float(
-                config.get("case3d_future_merge_overflow_ratio", config.get("case3_merge_overflow_ratio", 0.10))
-            )
-            case_3d_future_chunks = build_month_chunks_from_df(
-                case_3d_future_df,
-                prt,
-                overflow_ratio=case_3d_future_overflow,
-            )
-            logger.info(f"Case III Soft Delete Future merge chunks: {len(case_3d_future_chunks)}")
-            for idx, months in enumerate(case_3d_future_chunks, 1):
-                case_3d_future_chunk_df = case_3d_future_df.filter(F.col(prt).isin(months))
-                case_3d_future_chunk_df = align_for_summary_merge(
-                    spark=spark,
-                    df=case_3d_future_chunk_df,
-                    config=config,
-                    stage=f"summary_merge_case_3d_future_chunk_{idx}",
-                )
-                case_3d_future_chunk_df.createOrReplaceTempView("case_3d_future_chunk")
+            if not soft_delete_month_chunks:
+                soft_delete_month_chunks = [
+                    [r[prt]] for r in case_3d_future_df.select(prt).distinct().orderBy(prt).collect()
+                ]
+            case_3d_future_month_set = {
+                r[prt] for r in case_3d_future_df.select(prt).distinct().collect() if r[prt] is not None
+            }
+            for idx, months in enumerate(soft_delete_month_chunks, 1):
+                case_3d_chunk_months = [m for m in months if m in case_3d_future_month_set]
+                if not case_3d_chunk_months:
+                    continue
+                case_3d_chunk_df = case_3d_future_df.filter(F.col(prt).isin(case_3d_chunk_months))
+                case_3d_chunk_df.createOrReplaceTempView("case_3d_future_chunk")
                 spark.sql(
                     f"""
                         MERGE INTO {summary_table} s
@@ -2603,8 +1950,8 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
                     """
                 )
                 logger.info(
-                    f"MERGED - CASE III Soft Delete Future chunk {idx}/{len(case_3d_future_chunks)} "
-                    f"(months={months})"
+                    f"MERGED - CASE III Soft Delete Future chunk {idx}/{len(soft_delete_month_chunks)} "
+                    f"(months={case_3d_chunk_months})"
                 )
             process_end_time = time.time()
             process_total_minutes = (process_end_time - process_start_time) / 60
@@ -2632,38 +1979,20 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
                 .drop("_rn")
             )
 
-            case_1_4_overflow = float(config.get("case1_4_merge_overflow_ratio", 0.10))
-            case_1_4_chunks = build_month_chunks_from_df(
-                append_merge_df,
-                prt,
-                overflow_ratio=case_1_4_overflow,
+            append_merge_df = append_merge_df.repartition(
+                get_write_partitions(spark, config, expected_rows=expected_rows_append, stage="summary_merge_case_1_4")
             )
-            logger.info(f"Case I/IV summary merge chunks: {len(case_1_4_chunks)}")
+            append_merge_df.createOrReplaceTempView("case_1_4_merge")
 
-            for idx, months in enumerate(case_1_4_chunks, 1):
-                case_1_4_chunk_df = append_merge_df.filter(F.col(prt).isin(months))
-                case_1_4_chunk_df = align_for_summary_merge(
-                    spark=spark,
-                    df=case_1_4_chunk_df,
-                    config=config,
-                    stage=f"summary_merge_case_1_4_chunk_{idx}",
-                    expected_rows=expected_rows_append,
-                )
-                case_1_4_chunk_df.createOrReplaceTempView("case_1_4_merge_chunk")
-
-                spark.sql(
-                    f"""
-                        MERGE INTO {summary_table} s
-                        USING case_1_4_merge_chunk c
-                        ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
-                        WHEN MATCHED AND c.{ts} >= s.{ts} THEN UPDATE SET *
-                        WHEN NOT MATCHED THEN INSERT *
-                    """
-                )
-                logger.info(
-                    f"MERGED - CASE I/IV chunk {idx}/{len(case_1_4_chunks)} "
-                    f"(months={months})"
-                )
+            spark.sql(
+                f"""
+                    MERGE INTO {summary_table} s
+                    USING case_1_4_merge c
+                    ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
+                    WHEN MATCHED AND c.{ts} >= s.{ts} THEN UPDATE SET *
+                    WHEN NOT MATCHED THEN INSERT *
+                """
+            )
 
             process_end_time = time.time()
             process_total_minutes = (process_end_time - process_start_time) / 60
@@ -2680,8 +2009,15 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
                 .filter(F.col("_rn") == 1)
                 .drop("_rn")
             )
-
-            latest_append_df.createOrReplaceTempView("latest_case_1_4")
+            latest_shared_cols, latest_update_set_expr = build_latest_merge_columns(
+                spark,
+                latest_summary_table,
+                latest_append_df.columns,
+                pk,
+            )
+            latest_append_df.select(*latest_shared_cols).createOrReplaceTempView("latest_case_1_4")
+            insert_cols = ", ".join(latest_shared_cols)
+            insert_vals = ", ".join([f"c.{col_name}" for col_name in latest_shared_cols])
 
             spark.sql(
                 f"""
@@ -2691,8 +2027,8 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
                     WHEN MATCHED AND (
                         s.{prt} < c.{prt}
                         OR (s.{prt} = c.{prt} AND s.{ts} <= c.{ts})
-                    ) THEN UPDATE SET *
-                    WHEN NOT MATCHED THEN INSERT *
+                    ) THEN UPDATE SET {latest_update_set_expr}
+                    WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})
                 """
             )
 
@@ -2791,55 +2127,32 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
                 else:
                     latest_soft_delete_set_exprs.append(f"s.{col_name} = c.{col_name}")
 
-            # Guard against accidental duplicate source keys for latest merge.
-            latest_case_3d_future_df = (
-                case_3d_future_df
-                .select(pk, prt, *latest_soft_delete_cols)
-                .dropDuplicates([pk, prt])
-            )
-            latest_case_3d_future_df.createOrReplaceTempView("latest_case_3d_future")
-            spark.sql(
-                f"""
-                    MERGE INTO {latest_summary_table} s
-                    USING latest_case_3d_future c
-                    ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
-                    WHEN MATCHED
-                    THEN UPDATE SET {', '.join(latest_soft_delete_set_exprs)}
-                """
-            )
+            if not soft_delete_month_chunks:
+                soft_delete_month_chunks = [
+                    [r[prt]] for r in case_3d_future_df.select(prt).distinct().orderBy(prt).collect()
+                ]
+            case_3d_future_month_set = {
+                r[prt] for r in case_3d_future_df.select(prt).distinct().collect() if r[prt] is not None
+            }
+            for idx, months in enumerate(soft_delete_month_chunks, 1):
+                case_3d_chunk_months = [m for m in months if m in case_3d_future_month_set]
+                if not case_3d_chunk_months:
+                    continue
+                case_3d_latest_chunk_df = case_3d_future_df.filter(F.col(prt).isin(case_3d_chunk_months))
+                case_3d_latest_chunk_df.createOrReplaceTempView("latest_case_3d_future_chunk")
+                spark.sql(
+                    f"""
+                        MERGE INTO {latest_summary_table} s
+                        USING latest_case_3d_future_chunk c
+                        ON s.{pk} = c.{pk}
+                        WHEN MATCHED AND s.{prt} = c.{prt}
+                        THEN UPDATE SET {', '.join(latest_soft_delete_set_exprs)}
+                    """
+                )
             process_end_time = time.time()
             process_total_minutes = (process_end_time - process_start_time) / 60
             logger.info(f"Updated latest_summary | MERGE - CASE III Soft Delete Future Patches | Time Elapsed: {process_total_minutes:.2f} minutes")
             logger.info("-" * 60)
-
-        # Apply month-row soft-delete flags to latest_summary when latest row month was deleted.
-        process_start_time = time.time()
-        if case_3d_month_df is not None:
-            latest_cols = set(spark.table(latest_summary_table).columns)
-            if SOFT_DELETE_COLUMN in latest_cols:
-                latest_case_3d_month_df = (
-                    case_3d_month_df
-                    .select(pk, prt, ts, SOFT_DELETE_COLUMN)
-                    .dropDuplicates([pk, prt])
-                )
-                latest_case_3d_month_df.createOrReplaceTempView("latest_case_3d_month")
-                spark.sql(
-                    f"""
-                        MERGE INTO {latest_summary_table} s
-                        USING latest_case_3d_month c
-                        ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
-                        WHEN MATCHED THEN UPDATE SET
-                            s.{SOFT_DELETE_COLUMN} = c.{SOFT_DELETE_COLUMN},
-                            s.{ts} = GREATEST(s.{ts}, c.{ts})
-                    """
-                )
-                process_end_time = time.time()
-                process_total_minutes = (process_end_time - process_start_time) / 60
-                logger.info(
-                    f"Updated latest_summary | MERGE - CASE III Soft Delete Month Flags | "
-                    f"Time Elapsed: {process_total_minutes:.2f} minutes"
-                )
-                logger.info("-" * 60)
 
         # Reconstruct latest_summary when the latest month itself was soft-deleted.
         process_start_time = time.time()
@@ -2872,7 +2185,7 @@ def write_backfill_results(spark: SparkSession, config: Dict[str, Any], expected
                                 ) as _rn
                             FROM {summary_table} s
                             JOIN deleted_latest_accounts a ON s.{pk} = a.{pk}
-                            WHERE COALESCE(s.{SOFT_DELETE_COLUMN}, '') NOT IN ({delete_codes_sql})
+                            WHERE COALESCE(s.{SOFT_DELETE_COLUMN}, '0') NOT IN ({delete_codes_sql})
                         ) x
                         WHERE _rn = 1
                     """
@@ -2933,38 +2246,20 @@ def write_forward_results(spark: SparkSession, config: Dict[str, Any], expected_
                 .drop("_rn")
             )
 
-            case_2_overflow = float(config.get("case2_merge_overflow_ratio", 0.10))
-            case_2_chunks = build_month_chunks_from_df(
-                case_2_merge_df,
-                prt,
-                overflow_ratio=case_2_overflow,
+            case_2_merge_df = case_2_merge_df.repartition(
+                get_write_partitions(spark, config, expected_rows=expected_rows, stage="summary_merge_case_2")
             )
-            logger.info(f"Case II summary merge chunks: {len(case_2_chunks)}")
+            case_2_merge_df.createOrReplaceTempView("case_2_summary")
 
-            for idx, months in enumerate(case_2_chunks, 1):
-                case_2_chunk_df = case_2_merge_df.filter(F.col(prt).isin(months))
-                case_2_chunk_df = align_for_summary_merge(
-                    spark=spark,
-                    df=case_2_chunk_df,
-                    config=config,
-                    stage=f"summary_merge_case_2_chunk_{idx}",
-                    expected_rows=expected_rows,
-                )
-                case_2_chunk_df.createOrReplaceTempView("case_2_summary_chunk")
-
-                spark.sql(
-                    f"""
-                        MERGE INTO {summary_table} s
-                        USING case_2_summary_chunk c
-                        ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
-                        WHEN MATCHED AND c.{ts} >= s.{ts} THEN UPDATE SET *
-                        WHEN NOT MATCHED THEN INSERT *
-                    """
-                )
-                logger.info(
-                    f"MERGED - CASE II chunk {idx}/{len(case_2_chunks)} "
-                    f"(months={months})"
-                )
+            spark.sql(
+                f"""
+                    MERGE INTO {summary_table} s
+                    USING case_2_summary c
+                    ON s.{pk} = c.{pk} AND s.{prt} = c.{prt}
+                    WHEN MATCHED AND c.{ts} >= s.{ts} THEN UPDATE SET *
+                    WHEN NOT MATCHED THEN INSERT *
+                """
+            )
 
             process_end_time = time.time()
             process_total_minutes = (process_end_time - process_start_time) / 60
@@ -3046,13 +2341,7 @@ def run_pipeline(spark: SparkSession, config: Dict[str, Any]):
         'temp_table': None
     }
 
-    run_id = f"summary_inc_{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
-    run_start_states: Optional[Dict[str, Dict[str, Any]]] = None
-
     try:
-        ensure_soft_delete_columns(spark, config)
-        run_start_states = log_current_snapshot_state(spark, config, label="Pre-run")
-        mark_run_started(spark, config, run_id=run_id, start_states=run_start_states)
         process_start_time = time.time()    
 
         # Step 1: Load and classify
@@ -3125,14 +2414,14 @@ def run_pipeline(spark: SparkSession, config: Dict[str, Any]):
             logger.info(f"\n>>> PROCESSING NEW ACCOUNTS ({case_i_count:,} records)")
             case_i_result = process_case_i(case_i_df, config)
             case_i_result.persist(StorageLevel.MEMORY_AND_DISK)
-            write_case_table_bucketed(
-                spark=spark,
-                df=case_i_result,
-                table_name="temp_catalog.checkpointdb.case_1",
-                config=config,
-                stage="case_1_temp",
-                expected_rows=case_i_count,
-            )
+            case_i_result.repartition(
+                get_write_partitions(
+                    spark,
+                    config,
+                    expected_rows=case_i_count,
+                    stage="case_1_temp"
+                )
+            ).writeTo("temp_catalog.checkpointdb.case_1").create()
 
             process_end_time = time.time()
             process_total_minutes = (process_end_time - process_start_time) / 60
@@ -3167,40 +2456,11 @@ def run_pipeline(spark: SparkSession, config: Dict[str, Any]):
 
         logger.info("PROCESS COMPLETED - Deleting the persisted classification results")
         classified.unpersist()
-        finalize_run_tracking(
-            spark=spark,
-            config=config,
-            run_id=run_id,
-            start_states=run_start_states,
-            success=True,
-            error_message=None,
-        )
-        log_current_snapshot_state(spark, config, label="Post-run")
+        refresh_watermark_tracker(spark, config, mark_committed=True)
 
     except Exception as e:
-        failure_message = str(e)
         try:
-            if run_start_states is not None:
-                rollback_statuses = rollback_tables_to_run_start(
-                    spark=spark,
-                    config=config,
-                    start_states=run_start_states,
-                )
-                rollback_status_message = "; ".join(
-                    [f"{k}={v}" for k, v in sorted(rollback_statuses.items())]
-                )
-                if rollback_status_message:
-                    failure_message = f"{failure_message} | rollback: {rollback_status_message}"
-                finalize_run_tracking(
-                    spark=spark,
-                    config=config,
-                    run_id=run_id,
-                    start_states=run_start_states,
-                    success=False,
-                    error_message=failure_message,
-                )
-            else:
-                refresh_watermark_tracker(spark, config, mark_committed=False)
+            refresh_watermark_tracker(spark, config, mark_committed=False)
         except Exception as tracker_error:
             logger.warning(f"Failed to refresh watermark tracker after pipeline error: {tracker_error}")
         logger.error(f"Pipeline failed: {e}", exc_info=True)

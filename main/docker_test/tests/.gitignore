@@ -1,2 +1,8 @@
 __pycache__/
 _parallel_logs/
+artifacts/
+_last_run.log
+_last_run.json
+artifacts/
+logs/
+backfill_soft_delete_audit_logs/
