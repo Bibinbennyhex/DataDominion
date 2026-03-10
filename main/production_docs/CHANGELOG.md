@@ -5,6 +5,155 @@ Earlier version history (v4.0 → v9.4.8) is recorded in `updates/summary_v9_pro
 
 ---
 
+## main (March 2026) — Soft Delete, Rollback & Safety Enhancements
+
+### Summary
+
+Major additions to the production pipeline building on the February rewrite:
+
+- **Soft Delete Support** — full lifecycle handling for `soft_del_cd` codes `1` and `4` across all cases
+- **Automatic Rollback on Failure** — pipeline failures trigger Iceberg snapshot rollback for both `summary` and `latest_summary`
+- **Enhanced Watermark Tracker** — now tracks snapshot IDs, run_id, status (RUNNING/SUCCESS/FAILURE), and error messages
+- **Bucketed Temp Tables** — case temp tables are now partitioned + bucketed (64 buckets by `cons_acct_key`) to align with summary for faster merges
+- **Case II Chunked Merge** — Case II now uses chunked month-based merge (same as Case III) for large forward batches
+- **hist_rpt_dt Integration** — `acct_dt` resolution via left join on `hist_rpt_dt_table` with soft-delete-aware prioritization
+- **Case II Soft-Delete-Aware Context** — accounts whose `latest_summary` row is soft-deleted are treated as Case-I-style (fresh arrays) instead of inheriting deleted context
+- **Case III Soft Delete Processing** — dedicated `process_case_iii_soft_delete()` nullifies the deleted month's position in all future rows' history arrays
+
+---
+
+## Feature: Soft Delete Support (March 2026)
+
+### Overview
+
+Full lifecycle handling for account corrections via `soft_del_cd` column. Delete codes `1` and `4` trigger special processing instead of standard case logic.
+
+### Schema
+
+A `soft_del_cd STRING` column is added to both `summary` and `latest_summary` tables. The pipeline calls `ensure_soft_delete_columns()` at startup to add it if missing.
+
+### How It Works
+
+| Phase | Soft Delete Behavior |
+|-------|---------------------|
+| `prepare_source_data()` | Joins with `hist_rpt_dt_table` to resolve `acct_dt` — if both source and hist row are deleted, `acct_dt = NULL`; otherwise the non-deleted or newest `acct_dt` wins |
+| Classification | Records with `soft_del_cd IN ('1','4')` are flagged as `_is_soft_delete = true` |
+| Case III deletes | Routed to `process_case_iii_soft_delete()` instead of `process_case_iii()` |
+| Case I/IV deletes | Filtered out — soft-deleted new accounts are not written |
+| Case II deletes | Filtered out — only non-deleted records generate forward entries |
+| Case II context | `latest_summary` rows with delete codes are excluded from the join context; affected accounts get Case-I-style fresh arrays |
+
+### Case III Soft Delete Processing (`process_case_iii_soft_delete`)
+
+Two-part operation:
+
+1. **Part A: Month-row update** — writes `soft_del_cd` + `base_ts` to `case_3d_month` temp table
+2. **Part B: Future array nullification** — for each future month row whose history array references the deleted position, sets that position to NULL. Writes to `case_3d_future` temp table.
+
+### New Temp Tables
+
+| Table | Case | Purpose |
+|-------|------|---------|
+| `temp_catalog.checkpointdb.case_3d_month` | III-D | Month-row soft_del_cd update |
+| `temp_catalog.checkpointdb.case_3d_future` | III-D | Future array position nullification |
+
+---
+
+## Feature: Automatic Rollback on Failure (March 2026)
+
+### Overview
+
+When the pipeline fails mid-run, it now **automatically rolls back** both `summary` and `latest_summary` to their pre-run Iceberg snapshots.
+
+### How It Works
+
+```python
+# In run_pipeline() exception handler:
+rollback_statuses = rollback_tables_to_run_start(spark, config, start_states)
+finalize_run_tracking(spark, config, run_id, start_states, success=False, error_message=...)
+```
+
+1. `log_current_snapshot_state()` captures snapshot IDs for both tables **before** processing
+2. `mark_run_started()` writes RUNNING status to tracker with pre-run snapshot IDs
+3. On success: `finalize_run_tracking(success=True)` advances watermark
+4. On failure: `rollback_tables_to_run_start()` calls `CALL system.rollback_to_snapshot(...)` for each table, then `finalize_run_tracking(success=False)` records the error
+
+### Tracker Schema (Enhanced)
+
+```sql
+CREATE TABLE watermark_tracker (
+  source_name                      STRING,    -- 'summary' | 'latest_summary' | 'committed_ingestion_watermark'
+  source_table                     STRING,
+  max_base_ts                      TIMESTAMP,
+  max_rpt_as_of_mo                 STRING,
+  updated_at                       TIMESTAMP,
+  previous_successful_snapshot_id  BIGINT,    -- NEW: last known-good snapshot
+  current_snapshot_id              BIGINT,    -- NEW: current run's snapshot
+  status                           STRING,    -- NEW: 'RUNNING' | 'SUCCESS' | 'FAILURE'
+  run_id                           STRING,    -- NEW: unique per-run identifier
+  error_message                    STRING     -- NEW: failure details (truncated to 500 chars)
+) USING iceberg
+```
+
+---
+
+## Feature: Bucketed Temp Tables (March 2026)
+
+### Overview
+
+All case temp tables are now written with `write_case_table_bucketed()` — partitioned by `rpt_as_of_mo` and bucketed into 64 buckets by `cons_acct_key`, matching the summary table layout.
+
+```python
+write_case_table_bucketed(spark, df, table_name, config, stage, expected_rows)
+```
+
+### Table Properties
+
+```sql
+PARTITIONED BY (rpt_as_of_mo, bucket(64, cons_acct_key))
+TBLPROPERTIES (
+    'write.distribution-mode' = 'hash',
+    'write.merge.distribution-mode' = 'hash'
+)
+```
+
+### Merge Alignment
+
+`align_for_summary_merge()` repartitions and sorts the merge source to match the summary table's distribution before each MERGE, reducing shuffle during the merge join.
+
+---
+
+## Feature: Case II Chunked Merge (March 2026)
+
+### Overview
+
+Case II (forward entries) now uses the same month-chunked merge strategy as Case III for large batches:
+
+```python
+case_2_chunks = build_month_chunks_from_df(case_2_merge_df, prt, overflow_ratio=0.10)
+```
+
+Each chunk is merged independently, preventing oversized Iceberg commits that could cause memory pressure on large forward batches.
+
+---
+
+## Feature: hist_rpt_dt Integration (March 2026)
+
+### Overview
+
+`prepare_source_data()` now joins with a separate `hist_rpt_dt_table` (configured via `hist_rpt_dt_table` and `hist_rpt_dt_cols` in config) to resolve `acct_dt` when soft-delete corrections arrive from different source systems.
+
+### Priority Logic
+
+```sql
+CASE
+  WHEN both source AND hist are soft-deleted → acct_dt = NULL
+  WHEN source is NOT deleted (and hist is, or source is newer) → use source acct_dt
+  WHEN hist is NOT deleted (and source is, or hist is newer)   → use hist acct_dt
+  ELSE use source acct_dt
+END
+```
+
 ## main (February 2026) — Production Rewrite
 
 ### Summary

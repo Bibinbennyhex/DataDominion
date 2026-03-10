@@ -1,7 +1,7 @@
 # Performance Analysis — Summary Pipeline (main)
 
 **Pipeline Version**: main (post v9.4.8)
-**Last Updated**: February 2026
+**Last Updated**: March 2026
 
 ---
 
@@ -28,12 +28,13 @@
 
 ## 1. Version Comparison
 
-| Version | Watermark Tracker | Per-Case Temp Tables | Chunked III Merge | Source Window Filter |
-|---------|-------------------|----------------------|-------------------|----------------------|
-| v9.3 | ✗ | ✗ | ✗ | ✗ |
-| v9.4 | ✗ | Pooled temp table | ✗ | ✗ |
-| v9.4.8 | ✗ | Pooled temp table | ✗ | ✗ |
-| **main** | **✓** | **✓ (per-case)** | **✓** | **✓** |
+| Version | Watermark Tracker | Per-Case Temp Tables | Chunked Merge | Source Window Filter | Bucketed Temps | Soft Delete | Rollback |
+|---------|-------------------|----------------------|---------------|----------------------|----------------|-------------|----------|
+| v9.3 | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| v9.4 | ✗ | Pooled temp table | ✗ | ✗ | ✗ | ✗ | ✗ |
+| v9.4.8 | ✗ | Pooled temp table | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **main (Feb)** | **✓** | **✓ (per-case)** | **✓ (III)** | **✓** | ✗ | ✗ | ✗ |
+| **main (Mar)** | **✓ (enhanced)** | **✓ (per-case)** | **✓ (II+III)** | **✓** | **✓ (64 buckets)** | **✓** | **✓** |
 
 ---
 

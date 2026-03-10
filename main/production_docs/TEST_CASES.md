@@ -2,7 +2,7 @@
 
 **Pipeline Version**: main (post v9.4.8)
 **Test Framework**: Python + PySpark (Docker Iceberg)
-**Last Updated**: February 2026
+**Last Updated**: March 2026
 
 ---
 
@@ -13,16 +13,18 @@
 3. [Case I — New Accounts](#3-case-i--new-accounts)
 4. [Case II — Forward Entries](#4-case-ii--forward-entries)
 5. [Case III — Backfill](#5-case-iii--backfill)
-6. [Case IV — Bulk Historical Load](#6-case-iv--bulk-historical-load)
-7. [Cross-Case Integration Test](#7-cross-case-integration-test)
-8. [Idempotency Tests](#8-idempotency-tests)
-9. [Watermark Tracker Tests](#9-watermark-tracker-tests)
-10. [latest_summary Consistency Tests](#10-latest_summary-consistency-tests)
-11. [Edge Case & Regression Tests](#11-edge-case--regression-tests)
-12. [Scenario Suite](#12-scenario-suite)
-13. [Performance Benchmarks](#13-performance-benchmarks)
-14. [Running Tests](#14-running-tests)
-15. [Test Result Summary](#15-test-result-summary)
+6. [Case III — Soft Delete](#6-case-iii--soft-delete)
+7. [Case IV — Bulk Historical Load](#7-case-iv--bulk-historical-load)
+8. [Cross-Case Integration Test](#8-cross-case-integration-test)
+9. [Idempotency Tests](#9-idempotency-tests)
+10. [Watermark Tracker Tests](#10-watermark-tracker-tests)
+11. [latest_summary Consistency Tests](#11-latest_summary-consistency-tests)
+12. [Recovery & Rollback Tests](#12-recovery--rollback-tests)
+13. [Edge Case & Regression Tests](#13-edge-case--regression-tests)
+14. [Scenario Suite](#14-scenario-suite)
+15. [Performance Benchmarks](#15-performance-benchmarks)
+16. [Running Tests](#16-running-tests)
+17. [Test Result Summary](#17-test-result-summary)
 
 ---
 
@@ -90,6 +92,12 @@ Every test follows this lifecycle:
 | `test_aggressive_idempotency.py` | ~20 assertions | E2E — multiple reruns with all cases, no drift |
 | `test_latest_summary_consistency.py` | 2 assertions | Regression — latest_summary ↔ summary sync after backfill |
 | `test_case3_current_max_month.py` | ~8 assertions | Edge case — backfill at current max month boundary |
+| `test_soft_delete_case_iii.py` | ~15 assertions | Soft delete — Case III delete lifecycle + future nullification |
+| `test_backfill_soft_delete_standalone.py` | ~10 assertions | Soft delete — standalone delete without other cases |
+| `test_backfill_soft_delete_audit_export.py` | ~12 assertions | Soft delete — audit trail and export validation |
+| `test_hist_rpt_acct_dt_soft_delete_resolution.py` | ~10 assertions | hist_rpt_dt — acct_dt resolution with soft delete priority |
+| `test_backfill_hist_rpt_preload.py` | ~8 assertions | hist_rpt_dt — preloaded hist_rpt_dt data |
+| `test_recovery.py` | — | Rollback — pipeline failure triggers Iceberg snapshot rollback |
 | `test_consecutive_backfill.py` | — | Chained backfill — multiple months same batch |
 | `test_non_continuous_backfill.py` | — | Gaps in backfill months |
 | `test_long_backfill_gaps.py` | — | Very old backfill (>12 months ago) |
