@@ -6,6 +6,7 @@ from datetime import datetime
 
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
+from pyspark.storagelevel import StorageLevel
 
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ SOFT_DELETE_COLUMN = "soft_del_cd"
 DELETE_CODES = ("1", "4")
 HISTORY_LENGTH = 36
 MONTH_CHUNK_OVERFLOW = 0.10
+SINGLE_MERGE_MONTH_THRESHOLD = 24
 
 GRID_SPECS = [
     {
@@ -65,6 +67,14 @@ def _month_int_to_str(month_int: int) -> str:
         month = 12
         year -= 1
     return f"{year}-{month:02d}"
+
+
+def _month_int_to_yyyy_mm_expr(col_name: str) -> str:
+    return (
+        f"format_string('%04d-%02d', "
+        f"CAST(({col_name} - 1) / 12 AS INT), "
+        f"pmod({col_name} - 1, 12) + 1)"
+    )
 
 
 def _normalize_soft_del_col(df):
@@ -115,7 +125,8 @@ def _align_for_merge(spark: SparkSession, df):
         base_parts = max(base_parts, cfg_parts)
     except Exception:
         pass
-    return df.repartition(base_parts, F.col(PRT), F.col(PK)).sortWithinPartitions(PRT, PK)
+    # Avoid sortWithinPartitions: merge does not require ordering and sorting is expensive.
+    return df.repartition(base_parts, F.col(PRT), F.col(PK))
 
 
 def ensure_target_columns(spark: SparkSession):
@@ -150,17 +161,28 @@ def build_case_inputs(spark: SparkSession):
     # Deterministic dedupe in case subset has duplicate key-month records.
     src = src.dropDuplicates([PK, PRT, SOFT_DELETE_COLUMN])
     src = src.groupBy(PK, PRT).agg(F.max(F.col(SOFT_DELETE_COLUMN)).alias(SOFT_DELETE_COLUMN))
+    src = src.persist(StorageLevel.MEMORY_AND_DISK)
 
     candidate_count = src.count()
     logger.info(f"Deletion flagger candidate rows (soft_del_cd IN {DELETE_CODES}): {candidate_count:,}")
     if candidate_count == 0:
+        src.unpersist()
         return None, None, history_cols, grid_specs
 
-    summary_keys = summary_df.select(PK, PRT).distinct()
-    delete_existing = src.join(summary_keys, [PK, PRT], "inner")
+    # Restrict summary key scan to touched months only for better partition pruning.
+    touched_months = src.select(PRT).distinct()
+    summary_keys = (
+        summary_df
+        .join(touched_months, PRT, "inner")
+        .select(PK, PRT)
+        .distinct()
+    )
+    delete_existing = src.join(summary_keys, [PK, PRT], "inner").persist(StorageLevel.MEMORY_AND_DISK)
     delete_existing_count = delete_existing.count()
     logger.info(f"Delete rows matching existing summary rows: {delete_existing_count:,}")
     if delete_existing_count == 0:
+        src.unpersist()
+        delete_existing.unpersist()
         return None, None, history_cols, grid_specs
 
     delete_range = delete_existing.agg(F.min(PRT).alias("min_mo"), F.max(PRT).alias("max_mo")).first()
@@ -176,17 +198,12 @@ def build_case_inputs(spark: SparkSession):
     earliest_partition = _month_int_to_str(min_delete_int - HISTORY_LENGTH)
     latest_partition = _month_int_to_str(max_delete_int + HISTORY_LENGTH)
 
-    affected_accounts = delete_existing.select(PK).distinct()
+    affected_accounts = delete_existing.select(PK).distinct().persist(StorageLevel.MEMORY_AND_DISK)
     summary_filtered = (
-        spark.sql(
-            f"""
-                SELECT *
-                FROM {SUMMARY_TABLE}
-                WHERE {PRT} >= '{earliest_partition}' AND {PRT} <= '{latest_partition}'
-            """
-        )
+        spark.table(SUMMARY_TABLE)
+        .where((F.col(PRT) >= earliest_partition) & (F.col(PRT) <= latest_partition))
+        .select(PK, PRT, *history_cols)
         .join(affected_accounts, PK, "left_semi")
-        .withColumn("month_int", F.expr(_month_to_int_expr(PRT)))
     )
 
     delete_keys = (
@@ -194,36 +211,56 @@ def build_case_inputs(spark: SparkSession):
         .withColumn("delete_month_int", F.expr(_month_to_int_expr(PRT)))
         .select(
             F.col(PK),
-            F.col(PRT).alias("delete_month"),
             F.col("delete_month_int"),
         )
-    )
+    ).persist(StorageLevel.MEMORY_AND_DISK)
 
     if not history_cols:
         logger.info("No *_history columns found in summary; only month-row soft_del updates will be applied.")
+        src.unpersist()
+        delete_existing.unpersist()
+        affected_accounts.unpersist()
+        delete_keys.unpersist()
         return case_month_df, None, history_cols, grid_specs
 
-    summary_future = summary_filtered.select(PK, PRT, "month_int", *history_cols)
+    # Exact target key generation:
+    # For each delete month d, generate target months d+1 .. d+35 and join on exact (PK, PRT).
+    delete_targets = (
+        delete_keys
+        .withColumn("delete_position", F.explode(F.sequence(F.lit(1), F.lit(HISTORY_LENGTH - 1))))
+        .withColumn("target_month_int", F.col("delete_month_int") + F.col("delete_position"))
+        .withColumn(PRT, F.expr(_month_int_to_yyyy_mm_expr("target_month_int")))
+        .select(PK, PRT, "delete_position")
+    )
+
+    target_months = delete_targets.select(PRT).distinct()
+    summary_future = (
+        summary_filtered
+        .join(target_months, PRT, "inner")
+        .select(PK, PRT, *history_cols)
+    )
 
     joined = (
-        delete_keys.alias("d")
+        delete_targets.alias("d")
         .join(
             summary_future.alias("s"),
-            (F.col(f"s.{PK}") == F.col(f"d.{PK}"))
-            & (F.col("s.month_int") > F.col("d.delete_month_int"))
-            & ((F.col("s.month_int") - F.col("d.delete_month_int")) < F.lit(HISTORY_LENGTH)),
+            [PK, PRT],
             "inner",
         )
         .select(
             F.col(f"d.{PK}").alias(PK),
-            F.col(f"s.{PRT}").alias("summary_month"),
-            (F.col("s.month_int") - F.col("d.delete_month_int")).alias("delete_position"),
+            F.col(f"d.{PRT}").alias("summary_month"),
+            F.col("d.delete_position"),
             *[F.col(f"s.{c}").alias(f"existing_{c}") for c in history_cols],
         )
     )
 
     if joined.isEmpty():
         logger.info("No future month array/grid patches required.")
+        src.unpersist()
+        delete_existing.unpersist()
+        affected_accounts.unpersist()
+        delete_keys.unpersist()
         return case_month_df, None, history_cols, grid_specs
 
     agg_exprs = [
@@ -261,18 +298,19 @@ def build_case_inputs(spark: SparkSession):
             ),
         )
 
-    future_count = case_future_df.count()
-    logger.info(f"Generated future patch rows: {future_count:,}")
+    logger.info("Generated future patch rows.")
+    src.unpersist()
+    delete_existing.unpersist()
+    affected_accounts.unpersist()
+    delete_keys.unpersist()
     return case_month_df, case_future_df, history_cols, grid_specs
 
 
 def merge_summary_updates(spark: SparkSession, case_month_df, case_future_df, history_cols, grid_specs):
     if case_month_df is not None:
-        month_chunks = _build_month_chunks(case_month_df, overflow_ratio=MONTH_CHUNK_OVERFLOW)
-        logger.info(f"Summary month-update chunks: {len(month_chunks)}")
-        for idx, months in enumerate(month_chunks, 1):
-            chunk_df = _align_for_merge(spark, case_month_df.filter(F.col(PRT).isin(months)))
-            chunk_df.createOrReplaceTempView("case_month_chunk")
+        month_cnt = case_month_df.select(PRT).distinct().count()
+        if month_cnt <= SINGLE_MERGE_MONTH_THRESHOLD:
+            _align_for_merge(spark, case_month_df).createOrReplaceTempView("case_month_chunk")
             spark.sql(
                 f"""
                     MERGE INTO {SUMMARY_TABLE} s
@@ -282,17 +320,30 @@ def merge_summary_updates(spark: SparkSession, case_month_df, case_future_df, hi
                         s.{SOFT_DELETE_COLUMN} = c.{SOFT_DELETE_COLUMN}
                 """
             )
-            logger.info(f"Merged summary month chunk {idx}/{len(month_chunks)}")
+            logger.info(f"Merged summary month updates in single pass (months={month_cnt})")
+        else:
+            month_chunks = _build_month_chunks(case_month_df, overflow_ratio=MONTH_CHUNK_OVERFLOW)
+            logger.info(f"Summary month-update chunks: {len(month_chunks)}")
+            for idx, months in enumerate(month_chunks, 1):
+                chunk_df = _align_for_merge(spark, case_month_df.filter(F.col(PRT).isin(months)))
+                chunk_df.createOrReplaceTempView("case_month_chunk")
+                spark.sql(
+                    f"""
+                        MERGE INTO {SUMMARY_TABLE} s
+                        USING case_month_chunk c
+                        ON s.{PK} = c.{PK} AND s.{PRT} = c.{PRT}
+                        WHEN MATCHED THEN UPDATE SET
+                            s.{SOFT_DELETE_COLUMN} = c.{SOFT_DELETE_COLUMN}
+                    """
+                )
+                logger.info(f"Merged summary month chunk {idx}/{len(month_chunks)}")
 
     if case_future_df is not None:
-        future_chunks = _build_month_chunks(case_future_df, overflow_ratio=MONTH_CHUNK_OVERFLOW)
-        logger.info(f"Summary future-patch chunks: {len(future_chunks)}")
         set_expr = [f"s.{c} = c.{c}" for c in history_cols]
         set_expr += [f"s.{g['name']} = c.{g['name']}" for g in grid_specs]
-
-        for idx, months in enumerate(future_chunks, 1):
-            chunk_df = _align_for_merge(spark, case_future_df.filter(F.col(PRT).isin(months)))
-            chunk_df.createOrReplaceTempView("case_future_chunk")
+        future_month_cnt = case_future_df.select(PRT).distinct().count()
+        if future_month_cnt <= SINGLE_MERGE_MONTH_THRESHOLD:
+            _align_for_merge(spark, case_future_df).createOrReplaceTempView("case_future_chunk")
             spark.sql(
                 f"""
                     MERGE INTO {SUMMARY_TABLE} s
@@ -301,7 +352,23 @@ def merge_summary_updates(spark: SparkSession, case_month_df, case_future_df, hi
                     WHEN MATCHED THEN UPDATE SET {', '.join(set_expr)}
                 """
             )
-            logger.info(f"Merged summary future chunk {idx}/{len(future_chunks)}")
+            logger.info(f"Merged summary future patches in single pass (months={future_month_cnt})")
+        else:
+            future_chunks = _build_month_chunks(case_future_df, overflow_ratio=MONTH_CHUNK_OVERFLOW)
+            logger.info(f"Summary future-patch chunks: {len(future_chunks)}")
+
+            for idx, months in enumerate(future_chunks, 1):
+                chunk_df = _align_for_merge(spark, case_future_df.filter(F.col(PRT).isin(months)))
+                chunk_df.createOrReplaceTempView("case_future_chunk")
+                spark.sql(
+                    f"""
+                        MERGE INTO {SUMMARY_TABLE} s
+                        USING case_future_chunk c
+                        ON s.{PK} = c.{PK} AND s.{PRT} = c.{PRT}
+                        WHEN MATCHED THEN UPDATE SET {', '.join(set_expr)}
+                    """
+                )
+                logger.info(f"Merged summary future chunk {idx}/{len(future_chunks)}")
 
 
 def merge_latest_updates(spark: SparkSession, case_month_df, case_future_df, history_cols, grid_specs):
@@ -421,10 +488,24 @@ def run_job():
             logger.info("No soft-delete updates to apply from deletion_flagger.")
             return
 
+        if case_month_df is not None:
+            case_month_df = case_month_df.persist(StorageLevel.MEMORY_AND_DISK)
+            case_month_df.count()
+        if case_future_df is not None:
+            case_future_df = case_future_df.persist(StorageLevel.MEMORY_AND_DISK)
+            case_future_df.count()
+
         merge_summary_updates(spark, case_month_df, case_future_df, history_cols, grid_specs)
         merge_latest_updates(spark, case_month_df, case_future_df, history_cols, grid_specs)
         logger.info("Soft-delete backfill from deletion_flagger completed successfully.")
     finally:
+        try:
+            if "case_month_df" in locals() and case_month_df is not None:
+                case_month_df.unpersist()
+            if "case_future_df" in locals() and case_future_df is not None:
+                case_future_df.unpersist()
+        except Exception:
+            pass
         logger.info(f"Elapsed: {(time.time() - start) / 60:.2f} minutes")
         spark.stop()
 
