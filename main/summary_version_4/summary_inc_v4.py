@@ -1606,7 +1606,7 @@ def process_case_iii_using_latest_history_context(
     latest_cols = set(get_latest_cols(config))
     has_physical_history = all(c in latest_cols for c in history_cols)
     if not has_physical_history:
-        logger.warning("Case III v4 requires *_history columns in latest_summary; falling back to legacy Case III")
+        logger.warning("Case III latest-history path requires *_history columns in latest_summary; falling back to legacy Case III")
         return False
 
     global_latest_month = (
@@ -1629,8 +1629,7 @@ def process_case_iii_using_latest_history_context(
     latest_count = int(split_counts["latest_count"] or 0)
     older_count = int(split_counts["older_count"] or 0)
     logger.info(
-        f"Case III (v4 latest-history) split: latest_month={global_latest_month}, "
-        f"latest_rows={latest_count:,}, older_rows={older_count:,}"
+        f"Case III latest-history path selected for latest_month={global_latest_month}"
     )
 
     # Keep latest-month patch behavior for summary table (index-0 update on current latest month rows).
@@ -1667,7 +1666,7 @@ def process_case_iii_using_latest_history_context(
             stage="case_3_latest_month_patch_temp",
             expected_rows=latest_count,
         )
-        logger.info("Case III v2 generated latest-month patch table")
+        logger.info("Case III latest-month patch table generated")
 
     # Build peer map for all Case III rows (latest + older) for overwrite precedence.
     backfill_all = case_iii_df
@@ -1708,7 +1707,7 @@ def process_case_iii_using_latest_history_context(
         .withColumn("latest_month_int", F.expr(month_to_int_expr(prt)))
     )
     if latest_ctx.isEmpty():
-        logger.warning("No non-deleted latest_summary context for Case III v2; falling back to legacy Case III")
+        logger.warning("No non-deleted latest_summary context for Case III; falling back to legacy Case III")
         return False
 
     latest_patch_base = (
@@ -1787,7 +1786,7 @@ def process_case_iii_using_latest_history_context(
     )
 
     if older_count == 0:
-        logger.info("Case III v2 completed (latest-month only)")
+        logger.info("Case III latest-history processing completed (latest-month only)")
         return True
 
     older_with_peer = backfill_all.filter(F.col(prt) < F.lit(global_latest_month))
@@ -1961,7 +1960,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
         return
 
     split_enabled = bool(config.get("enable_case3_hot_cold_split", True))
-    if split_enabled and not bool(config.get("_v4_case3_split_internal", False)):
+    if split_enabled and not bool(config.get("_case3_split_internal", False)):
         prt = config['partition_column']
         hot_window = max(1, int(config.get("case3_hot_window_months", 36)))
         split_df = case_iii_df
@@ -1987,9 +1986,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
             hot_count = int(split_counts["hot_count"] or 0)
             cold_count = int(split_counts["cold_count"] or 0)
             logger.info(
-                "Case III v4 split: "
-                f"latest_month={global_latest_month}, hot_window={hot_window}, "
-                f"hot_rows={hot_count:,}, cold_rows={cold_count:,}"
+                f"Case III split active for latest_month={global_latest_month} with hot_window={hot_window}"
             )
 
             hot_df = split_df.filter(F.col("month_int") >= F.lit(hot_cutoff_int))
@@ -1997,7 +1994,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
 
             if hot_count > 0:
                 hot_cfg = dict(config)
-                hot_cfg["_v4_case3_split_internal"] = True
+                hot_cfg["_case3_split_internal"] = True
                 hot_cfg["use_latest_history_context_case3"] = True
                 hot_handled = process_case_iii_using_latest_history_context(
                     spark,
@@ -2006,9 +2003,9 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
                     expected_rows=hot_count,
                 )
                 if not hot_handled:
-                    logger.info("Case III v4 hot lane fell back to legacy processing")
+                    logger.info("Case III hot path fell back to legacy processing")
                     hot_fallback_cfg = dict(config)
-                    hot_fallback_cfg["_v4_case3_split_internal"] = True
+                    hot_fallback_cfg["_case3_split_internal"] = True
                     hot_fallback_cfg["use_latest_history_context_case3"] = False
                     process_case_iii(
                         spark,
@@ -2019,7 +2016,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
 
             if cold_count > 0:
                 cold_cfg = dict(config)
-                cold_cfg["_v4_case3_split_internal"] = True
+                cold_cfg["_case3_split_internal"] = True
                 cold_cfg["use_latest_history_context_case3"] = False
                 cold_cfg["force_cold_case3_broadcast"] = bool(config.get("force_cold_case3_broadcast", True))
                 process_case_iii(
@@ -2033,7 +2030,7 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
     if config.get("use_latest_history_context_case3", True):
         if process_case_iii_using_latest_history_context(spark, case_iii_df, config, expected_rows=expected_rows):
             return
-        logger.info("Case III v2 path fell back to legacy mode")
+        logger.info("Case III latest-history path fell back to legacy mode")
 
     pk = config['primary_column']
     prt = config['partition_column']
@@ -2528,6 +2525,272 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
     return
 
 
+def process_case_iii_soft_delete_using_latest_history_context(
+    spark: SparkSession,
+    case_iii_delete_df,
+    config: Dict[str, Any],
+    expected_rows: Optional[int] = None,
+) -> bool:
+    """
+    Hot-lane soft-delete processing using latest_summary history context.
+
+    This path avoids broad summary range scans by deriving future-month patches from
+    latest_summary context for touched accounts. Returns False when context is not
+    usable, so caller can fall back to legacy behavior safely.
+    """
+    if case_iii_delete_df is None or case_iii_delete_df.isEmpty():
+        return True
+
+    pk = config['primary_column']
+    prt = config['partition_column']
+    ts = config['max_identifier_column']
+    summary_table = config['destination_table']
+    latest_summary_table = config['latest_history_table']
+    history_len = get_summary_history_len(config)
+    latest_history_len = get_latest_history_len(config)
+    rolling_columns = config.get('rolling_columns', [])
+    grid_columns = config.get('grid_columns', [])
+    latest_cols = set(get_latest_cols(config))
+    history_cols = [f"{rc['name']}_history" for rc in rolling_columns]
+
+    if not all(c in latest_cols for c in history_cols):
+        logger.info(
+            "Case III Soft Delete latest-context path unavailable: latest_summary missing required history columns"
+        )
+        return False
+
+    delete_df = case_iii_delete_df.withColumn("delete_month_int", F.expr(month_to_int_expr(prt)))
+    affected_accounts = delete_df.select(pk).distinct()
+
+    latest_ctx = (
+        spark.table(latest_summary_table)
+        .select(pk, prt, ts, *history_cols)
+        .join(affected_accounts, pk, "inner")
+        .withColumn("latest_month_int", F.expr(month_to_int_expr(prt)))
+    )
+
+    if latest_ctx.isEmpty():
+        logger.info("Case III Soft Delete latest-context path unavailable: no matching latest_summary rows")
+        return False
+
+    # Keep only delete rows that already exist in summary month table.
+    delete_months = delete_df.select(prt).distinct()
+    summary_month_keys = (
+        spark.table(summary_table)
+        .select(pk, prt)
+        .join(F.broadcast(delete_months), prt, "inner")
+    )
+    delete_existing = (
+        delete_df.alias("d")
+        .join(
+            summary_month_keys.alias("s"),
+            (F.col(f"d.{pk}") == F.col(f"s.{pk}")) & (F.col(f"d.{prt}") == F.col(f"s.{prt}")),
+            "inner",
+        )
+        .select("d.*")
+    )
+
+    if delete_existing.isEmpty():
+        logger.info("No existing summary rows matched soft-delete records; nothing to update")
+        return True
+
+    # Part A: month-row flag updates (soft_del_cd + base_ts only)
+    delete_month_update_df = delete_existing.select(
+        F.col(pk),
+        F.col(prt),
+        F.col(ts),
+        F.col(SOFT_DELETE_COLUMN),
+    )
+    write_case_table_bucketed(
+        spark=spark,
+        df=delete_month_update_df,
+        table_name="temp_catalog.checkpointdb.case_3d_month",
+        config=config,
+        stage="case_3d_month_temp",
+        expected_rows=expected_rows,
+    )
+    logger.info("Case III Soft Delete - Month-row updates generated (context path)")
+
+    # Part B: future month patches for summary derived from latest_summary context
+    future_candidates = (
+        delete_existing.alias("d")
+        .join(latest_ctx.select(pk, "latest_month_int").alias("l"), pk, "inner")
+        .filter(F.col("l.latest_month_int") > F.col("d.delete_month_int"))
+        .withColumn(
+            "target_month_int",
+            F.explode(
+                F.sequence(
+                    F.col("d.delete_month_int") + F.lit(1),
+                    F.least(
+                        F.col("d.delete_month_int") + F.lit(history_len - 1),
+                        F.col("l.latest_month_int"),
+                    ),
+                )
+            ),
+        )
+        .select(
+            F.col(f"d.{pk}").alias(pk),
+            F.col("target_month_int"),
+            (F.col("target_month_int") - F.col("d.delete_month_int")).alias("delete_position"),
+            F.col(f"d.{ts}").alias("delete_ts"),
+        )
+    )
+
+    if not future_candidates.isEmpty():
+        future_agg = (
+            future_candidates
+            .groupBy(pk, "target_month_int")
+            .agg(
+                F.collect_set("delete_position").alias("delete_positions"),
+                F.max("delete_ts").alias("new_base_ts"),
+            )
+        )
+
+        future_ctx = future_agg.join(latest_ctx, pk, "inner")
+        future_ctx.createOrReplaceTempView("case3d_future_ctx")
+
+        target_month_expr = (
+            "format_string('%04d-%02d', "
+            "CAST(floor((target_month_int - 1) / 12) AS INT), "
+            "CAST(((target_month_int - 1) % 12) + 1 AS INT))"
+        )
+
+        patch_exprs = []
+        for rc in rolling_columns:
+            history_col = f"{rc['name']}_history"
+            dtype = rc.get('type', rc.get('data_type', 'String')).upper()
+            patch_exprs.append(
+                f"""
+                    transform(
+                        sequence(0, {history_len - 1}),
+                        pos -> CASE
+                            WHEN array_contains(delete_positions, pos) THEN CAST(NULL AS {dtype})
+                            ELSE CAST(
+                                element_at({history_col}, (latest_month_int - target_month_int + pos + 1))
+                                AS {dtype}
+                            )
+                        END
+                    ) AS {history_col}
+                """
+            )
+
+        future_patch_df = spark.sql(
+            f"""
+                SELECT
+                    {pk},
+                    {target_month_expr} AS {prt},
+                    GREATEST({ts}, new_base_ts) AS {ts},
+                    {', '.join(patch_exprs)}
+                FROM case3d_future_ctx
+            """
+        )
+
+        for gc in grid_columns:
+            source_rolling = gc.get('mapper_rolling_column', gc.get('source_history', ''))
+            source_history = f"{source_rolling}_history"
+            placeholder = gc.get('placeholder', '?')
+            separator = gc.get('seperator', gc.get('separator', ''))
+            future_patch_df = future_patch_df.withColumn(
+                gc['name'],
+                F.concat_ws(
+                    separator,
+                    F.transform(
+                        F.col(source_history),
+                        lambda x: F.coalesce(x.cast(StringType()), F.lit(placeholder))
+                    )
+                )
+            )
+
+        write_case_table_bucketed(
+            spark=spark,
+            df=future_patch_df,
+            table_name="temp_catalog.checkpointdb.case_3d_future",
+            config=config,
+            stage="case_3d_future_temp",
+            expected_rows=expected_rows,
+        )
+        logger.info("Case III Soft Delete - Future month patches generated (context path)")
+    else:
+        logger.info("Case III Soft Delete - No future month patches required (context path)")
+
+    # Part C: latest-summary history nullification from earliest delete month onward
+    delete_scope = (
+        delete_existing
+        .groupBy(pk)
+        .agg(
+            F.min("delete_month_int").alias("min_delete_month_int"),
+            F.max(F.col(ts)).alias("max_delete_ts"),
+        )
+    )
+    latest_patch_base = (
+        latest_ctx.join(delete_scope, pk, "inner")
+        .filter(F.col("latest_month_int") >= F.col("min_delete_month_int"))
+    )
+
+    if not latest_patch_base.isEmpty():
+        latest_patch_base.createOrReplaceTempView("case3d_latest_base")
+        patch_history_exprs = []
+        for rc in rolling_columns:
+            history_col = f"{rc['name']}_history"
+            dtype = rc.get('type', rc.get('data_type', 'String')).upper()
+            patch_history_exprs.append(
+                f"""
+                    transform(
+                        sequence(0, {latest_history_len - 1}),
+                        i -> CASE
+                            WHEN (latest_month_int - i) >= min_delete_month_int THEN CAST(NULL AS {dtype})
+                            ELSE element_at({history_col}, i + 1)
+                        END
+                    ) AS {history_col}
+                """
+            )
+
+        latest_delete_patch_df = spark.sql(
+            f"""
+                SELECT
+                    {pk},
+                    {prt},
+                    GREATEST({ts}, max_delete_ts) AS {ts},
+                    {', '.join(patch_history_exprs)}
+                FROM case3d_latest_base
+            """
+        )
+
+        for rc in rolling_columns:
+            latest_delete_patch_df = latest_delete_patch_df.withColumn(
+                f"{rc['name']}_history",
+                F.slice(F.col(f"{rc['name']}_history"), 1, latest_history_len),
+            )
+
+        for gc in grid_columns:
+            source_rolling = gc.get('mapper_rolling_column', gc.get('source_history', ''))
+            source_history = f"{source_rolling}_history"
+            placeholder = gc.get('placeholder', '?')
+            separator = gc.get('seperator', gc.get('separator', ''))
+            latest_delete_patch_df = latest_delete_patch_df.withColumn(
+                gc['name'],
+                F.concat_ws(
+                    separator,
+                    F.transform(
+                        F.slice(F.col(source_history), 1, history_len),
+                        lambda x: F.coalesce(x.cast(StringType()), F.lit(placeholder))
+                    )
+                )
+            )
+
+        write_case_table_bucketed(
+            spark=spark,
+            df=latest_delete_patch_df,
+            table_name="temp_catalog.checkpointdb.case_3d_latest_history_context_patch",
+            config=config,
+            stage="case_3d_latest_history_context_patch_temp",
+            expected_rows=expected_rows,
+        )
+        logger.info("Case III Soft Delete - Latest history patches generated (context path)")
+
+    return True
+
+
 def process_case_iii_soft_delete(
     spark: SparkSession,
     case_iii_delete_df,
@@ -2546,6 +2809,112 @@ def process_case_iii_soft_delete(
     logger.info("STEP 2c-DEL: Process Case III Soft Deletes")
     logger.info("=" * 80)
 
+    if case_iii_delete_df is None or case_iii_delete_df.isEmpty():
+        logger.info("No Case III soft-delete rows to process")
+        return
+
+    # Split soft-delete lane by month recency:
+    # hot path uses latest_summary context-aware processing,
+    # cold path falls back to legacy summary-scan processing.
+    split_enabled = bool(config.get("enable_case3_hot_cold_split", True))
+    if split_enabled and not bool(config.get("_case3d_split_internal", False)):
+        prt = config['partition_column']
+        hot_window = max(1, int(config.get("case3_hot_window_months", 36)))
+        split_df = case_iii_delete_df
+        if "month_int" not in split_df.columns:
+            split_df = split_df.withColumn("month_int", F.expr(month_to_int_expr(prt)))
+
+        global_latest_month = (
+            split_df
+            .agg(F.max("max_existing_month").alias("global_latest_month"))
+            .first()["global_latest_month"]
+        )
+        if global_latest_month is not None:
+            latest_int = int(global_latest_month[:4]) * 12 + int(global_latest_month[5:7])
+            hot_cutoff_int = latest_int - (hot_window - 1)
+            split_counts = (
+                split_df
+                .agg(
+                    F.sum(F.when(F.col("month_int") >= F.lit(hot_cutoff_int), F.lit(1)).otherwise(F.lit(0))).alias("hot_count"),
+                    F.sum(F.when(F.col("month_int") < F.lit(hot_cutoff_int), F.lit(1)).otherwise(F.lit(0))).alias("cold_count"),
+                )
+                .first()
+            )
+            hot_count = int(split_counts["hot_count"] or 0)
+            cold_count = int(split_counts["cold_count"] or 0)
+            logger.info(
+                f"Case III soft-delete split active for latest_month={global_latest_month} with hot_window={hot_window}"
+            )
+
+            hot_df = split_df.filter(F.col("month_int") >= F.lit(hot_cutoff_int))
+            cold_df = split_df.filter(F.col("month_int") < F.lit(hot_cutoff_int))
+
+            if hot_count > 0:
+                hot_cfg = dict(config)
+                hot_cfg["_case3d_split_internal"] = True
+                hot_cfg["use_latest_history_context_case3d"] = True
+                hot_handled = process_case_iii_soft_delete_using_latest_history_context(
+                    spark,
+                    hot_df,
+                    hot_cfg,
+                    expected_rows=hot_count,
+                )
+                if not hot_handled:
+                    logger.info("Case III soft-delete hot path fell back to legacy processing")
+                    hot_fallback_cfg = dict(config)
+                    hot_fallback_cfg["_case3d_split_internal"] = True
+                    hot_fallback_cfg["use_latest_history_context_case3d"] = False
+                    process_case_iii_soft_delete(
+                        spark,
+                        hot_df,
+                        hot_fallback_cfg,
+                        expected_rows=hot_count,
+                    )
+
+            if cold_count > 0:
+                cold_cfg = dict(config)
+                cold_cfg["_case3d_split_internal"] = True
+                cold_cfg["use_latest_history_context_case3d"] = False
+                force_cold_case3d_broadcast = bool(
+                    config.get(
+                        "force_cold_case3d_broadcast",
+                        config.get("force_cold_case3_broadcast", True),
+                    )
+                )
+                if force_cold_case3d_broadcast:
+                    row_cap = int(
+                        config.get(
+                            "cold_case3d_broadcast_row_cap",
+                            config.get("cold_case3_broadcast_row_cap", 10_000_000),
+                        )
+                    )
+                    if cold_count > row_cap:
+                        raise ValueError(
+                            f"Cold Case III soft-delete broadcast guard failed: "
+                            f"cold rows exceed cap={row_cap:,}"
+                        )
+                    cold_df = F.broadcast(cold_df)
+                    logger.info(
+                        f"Forced broadcast enabled for cold Case III soft-delete input (cap={row_cap:,})"
+                    )
+                process_case_iii_soft_delete(
+                    spark,
+                    cold_df,
+                    cold_cfg,
+                    expected_rows=cold_count,
+                )
+            return
+
+    if config.get("use_latest_history_context_case3d", True):
+        if process_case_iii_soft_delete_using_latest_history_context(
+            spark,
+            case_iii_delete_df,
+            config,
+            expected_rows=expected_rows,
+        ):
+            return
+        logger.info("Case III soft-delete latest-context path fell back to legacy mode")
+
     pk = config['primary_column']
     prt = config['partition_column']
     ts = config['max_identifier_column']
@@ -2556,10 +2925,6 @@ def process_case_iii_soft_delete(
     rolling_columns = config.get('rolling_columns', [])
     grid_columns = config.get('grid_columns', [])
     latest_cols = set(get_latest_cols(config))
-
-    if case_iii_delete_df is None or case_iii_delete_df.isEmpty():
-        logger.info("No Case III soft-delete rows to process")
-        return
 
     history_cols = [f"{rc['name']}_history" for rc in rolling_columns]
     affected_accounts = case_iii_delete_df.select(pk).distinct()
