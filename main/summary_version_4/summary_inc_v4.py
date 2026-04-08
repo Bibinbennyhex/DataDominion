@@ -877,6 +877,71 @@ def write_case_table_bucketed(
         spark.catalog.dropTempView(temp_view)
 
 
+def drop_case_tables(
+    spark: SparkSession,
+    table_stage_map: Dict[str, str],
+) -> None:
+    for table_name in table_stage_map.keys():
+        spark.sql(f"DROP TABLE IF EXISTS {table_name}")
+
+
+def snapshot_case_tables(
+    spark: SparkSession,
+    table_stage_map: Dict[str, str],
+    lane_tag: str,
+) -> Dict[str, str]:
+    snapshot_tables: Dict[str, str] = {}
+    for table_name in table_stage_map.keys():
+        if spark.catalog.tableExists(table_name):
+            snapshot_name = f"{table_name}_{lane_tag}"
+            spark.sql(f"DROP TABLE IF EXISTS {snapshot_name}")
+            spark.sql(f"CREATE TABLE {snapshot_name} USING iceberg AS SELECT * FROM {table_name}")
+            snapshot_tables[table_name] = snapshot_name
+    return snapshot_tables
+
+
+def cleanup_snapshot_tables(
+    spark: SparkSession,
+    snapshot_groups: List[Dict[str, str]],
+) -> None:
+    for snapshot_map in snapshot_groups:
+        for snapshot_name in snapshot_map.values():
+            spark.sql(f"DROP TABLE IF EXISTS {snapshot_name}")
+
+
+def combine_case_table_snapshots(
+    spark: SparkSession,
+    config: Dict[str, Any],
+    table_stage_map: Dict[str, str],
+    snapshot_groups: List[Dict[str, str]],
+    expected_rows: Optional[int] = None,
+) -> None:
+    for table_name, stage_name in table_stage_map.items():
+        parts = []
+        for snapshot_map in snapshot_groups:
+            snapshot_name = snapshot_map.get(table_name)
+            if snapshot_name and spark.catalog.tableExists(snapshot_name):
+                parts.append(spark.read.table(snapshot_name))
+
+        if not parts:
+            spark.sql(f"DROP TABLE IF EXISTS {table_name}")
+            continue
+
+        combined_df = parts[0]
+        for extra_df in parts[1:]:
+            combined_df = combined_df.unionByName(extra_df, allowMissingColumns=True)
+        combined_df = combined_df.dropDuplicates()
+
+        write_case_table_bucketed(
+            spark=spark,
+            df=combined_df,
+            table_name=table_name,
+            config=config,
+            stage=stage_name,
+            expected_rows=expected_rows,
+        )
+
+
 def build_balanced_month_chunks(
     month_weights: List[Tuple[str, float]],
     overflow_ratio: float = 0.10,
@@ -1993,64 +2058,120 @@ def process_case_iii(spark: SparkSession, case_iii_df, config: Dict[str, Any], e
             hot_df = split_df.filter(F.col("month_int") >= F.lit(hot_cutoff_int))
             cold_df = split_df.filter(F.col("month_int") < F.lit(hot_cutoff_int))
 
-            # Mixed hot+cold updates for the same account can target overlapping future rows.
-            # In that case, use unified processing to avoid split-lane overwrite/merge collisions.
+            has_account_overlap = False
+            overlap_accounts = None
             if hot_count > 0 and cold_count > 0:
-                has_account_overlap = (
-                    hot_df.select(pk).intersect(cold_df.select(pk)).limit(1).count() > 0
-                )
-                if has_account_overlap:
-                    logger.info(
-                        "Case III split bypassed for mixed hot/cold rows on same account; "
-                        "using unified processing path"
-                    )
-                    unified_cfg = dict(config)
-                    unified_cfg["_case3_split_internal"] = True
-                    unified_cfg["use_latest_history_context_case3"] = False
-                    unified_cfg["force_cold_case3_broadcast"] = bool(
-                        config.get("force_cold_case3_broadcast", True)
-                    )
-                    process_case_iii(
-                        spark,
-                        split_df,
-                        unified_cfg,
-                        expected_rows=hot_count + cold_count,
-                    )
-                    return
+                overlap_accounts = hot_df.select(pk).intersect(cold_df.select(pk)).distinct()
+                has_account_overlap = overlap_accounts.limit(1).count() > 0
 
-            if hot_count > 0:
+            force_unified_on_overlap = bool(config.get("force_case3_unified_on_any_overlap", False))
+            if has_account_overlap and force_unified_on_overlap:
+                logger.info(
+                    "Case III split safety fallback activated on overlap; using unified processing path"
+                )
+                unified_cfg = dict(config)
+                unified_cfg["_case3_split_internal"] = True
+                unified_cfg["use_latest_history_context_case3"] = False
+                unified_cfg["force_cold_case3_broadcast"] = bool(
+                    config.get("force_cold_case3_broadcast", True)
+                )
+                process_case_iii(
+                    spark,
+                    split_df,
+                    unified_cfg,
+                    expected_rows=hot_count + cold_count,
+                )
+                return
+
+            if has_account_overlap:
+                mixed_df = split_df.join(overlap_accounts, on=pk, how="left_semi")
+                hot_only_df = hot_df.join(overlap_accounts, on=pk, how="left_anti")
+                cold_only_df = cold_df.join(overlap_accounts, on=pk, how="left_anti")
+                logger.info(
+                    "Case III split mode: account-level lanes active (mixed + hot-only + cold-only)"
+                )
+            else:
+                mixed_df = None
+                hot_only_df = hot_df
+                cold_only_df = cold_df
+                logger.info("Case III split mode: hot-only + cold-only lanes (no account overlap)")
+
+            split_case_tables = {
+                "temp_catalog.checkpointdb.case_3a": "case_3a_temp_split_combine",
+                "temp_catalog.checkpointdb.case_3b": "case_3b_temp_split_combine",
+                "temp_catalog.checkpointdb.case_3_latest_month_patch": "case_3_latest_month_patch_temp_split_combine",
+                "temp_catalog.checkpointdb.case_3_latest_history_context_patch": "case_3_latest_history_context_patch_temp_split_combine",
+            }
+            snapshot_groups: List[Dict[str, str]] = []
+
+            if mixed_df is not None and not mixed_df.isEmpty():
+                drop_case_tables(spark, split_case_tables)
+                mixed_cfg = dict(config)
+                mixed_cfg["_case3_split_internal"] = True
+                mixed_cfg["use_latest_history_context_case3"] = False
+                mixed_cfg["force_cold_case3_broadcast"] = bool(
+                    config.get("force_cold_case3_broadcast", True)
+                )
+                process_case_iii(
+                    spark,
+                    mixed_df,
+                    mixed_cfg,
+                    expected_rows=hot_count + cold_count,
+                )
+                snapshot_groups.append(
+                    snapshot_case_tables(spark, split_case_tables, "mixed_lane_case3")
+                )
+
+            if hot_only_df is not None and not hot_only_df.isEmpty():
+                drop_case_tables(spark, split_case_tables)
                 hot_cfg = dict(config)
                 hot_cfg["_case3_split_internal"] = True
                 hot_cfg["use_latest_history_context_case3"] = True
                 hot_handled = process_case_iii_using_latest_history_context(
                     spark,
-                    hot_df,
+                    hot_only_df,
                     hot_cfg,
                     expected_rows=hot_count,
                 )
                 if not hot_handled:
-                    logger.info("Case III hot path fell back to legacy processing")
+                    logger.info("Case III hot-only lane fell back to legacy processing")
                     hot_fallback_cfg = dict(config)
                     hot_fallback_cfg["_case3_split_internal"] = True
                     hot_fallback_cfg["use_latest_history_context_case3"] = False
                     process_case_iii(
                         spark,
-                        hot_df,
+                        hot_only_df,
                         hot_fallback_cfg,
                         expected_rows=hot_count,
                     )
+                snapshot_groups.append(
+                    snapshot_case_tables(spark, split_case_tables, "hot_lane_case3")
+                )
 
-            if cold_count > 0:
+            if cold_only_df is not None and not cold_only_df.isEmpty():
+                drop_case_tables(spark, split_case_tables)
                 cold_cfg = dict(config)
                 cold_cfg["_case3_split_internal"] = True
                 cold_cfg["use_latest_history_context_case3"] = False
                 cold_cfg["force_cold_case3_broadcast"] = bool(config.get("force_cold_case3_broadcast", True))
                 process_case_iii(
                     spark,
-                    cold_df,
+                    cold_only_df,
                     cold_cfg,
                     expected_rows=cold_count,
                 )
+                snapshot_groups.append(
+                    snapshot_case_tables(spark, split_case_tables, "cold_lane_case3")
+                )
+
+            combine_case_table_snapshots(
+                spark=spark,
+                config=config,
+                table_stage_map=split_case_tables,
+                snapshot_groups=snapshot_groups,
+                expected_rows=expected_rows,
+            )
+            cleanup_snapshot_tables(spark, snapshot_groups)
             return
 
     if config.get("use_latest_history_context_case3", True):
@@ -2877,67 +2998,91 @@ def process_case_iii_soft_delete(
             hot_df = split_df.filter(F.col("month_int") >= F.lit(hot_cutoff_int))
             cold_df = split_df.filter(F.col("month_int") < F.lit(hot_cutoff_int))
 
-            # Mixed hot+cold updates for the same account can target the same future months.
-            # In that case, run a unified path to avoid duplicate merge source rows.
+            has_account_overlap = False
+            overlap_accounts = None
             if hot_count > 0 and cold_count > 0:
-                has_account_overlap = (
-                    hot_df.select(pk).intersect(cold_df.select(pk)).limit(1).count() > 0
+                overlap_accounts = hot_df.select(pk).intersect(cold_df.select(pk)).distinct()
+                has_account_overlap = overlap_accounts.limit(1).count() > 0
+
+            force_unified_on_overlap = bool(config.get("force_case3d_unified_on_any_overlap", False))
+            if has_account_overlap and force_unified_on_overlap:
+                logger.info(
+                    "Case III soft-delete split safety fallback activated on overlap; using unified processing path"
                 )
-                if has_account_overlap:
-                    logger.info(
-                        "Case III soft-delete split bypassed for mixed hot/cold rows on same account; "
-                        "using unified processing path"
-                    )
-                    unified_cfg = dict(config)
-                    unified_cfg["_case3d_split_internal"] = True
-                    unified_cfg["use_latest_history_context_case3d"] = False
-                    process_case_iii_soft_delete(
-                        spark,
-                        split_df,
-                        unified_cfg,
-                        expected_rows=hot_count + cold_count,
-                    )
-                    return
+                unified_cfg = dict(config)
+                unified_cfg["_case3d_split_internal"] = True
+                unified_cfg["use_latest_history_context_case3d"] = False
+                process_case_iii_soft_delete(
+                    spark,
+                    split_df,
+                    unified_cfg,
+                    expected_rows=hot_count + cold_count,
+                )
+                return
+
+            if has_account_overlap:
+                mixed_df = split_df.join(overlap_accounts, on=pk, how="left_semi")
+                hot_only_df = hot_df.join(overlap_accounts, on=pk, how="left_anti")
+                cold_only_df = cold_df.join(overlap_accounts, on=pk, how="left_anti")
+                logger.info(
+                    "Case III soft-delete split mode: account-level lanes active (mixed + hot-only + cold-only)"
+                )
+            else:
+                mixed_df = None
+                hot_only_df = hot_df
+                cold_only_df = cold_df
+                logger.info("Case III soft-delete split mode: hot-only + cold-only lanes (no account overlap)")
 
             split_case_tables = {
                 "temp_catalog.checkpointdb.case_3d_month": "case_3d_month_temp_split_combine",
                 "temp_catalog.checkpointdb.case_3d_future": "case_3d_future_temp_split_combine",
                 "temp_catalog.checkpointdb.case_3d_latest_history_context_patch": "case_3d_latest_history_context_patch_temp_split_combine",
             }
-            hot_snapshot_tables: Dict[str, str] = {}
+            snapshot_groups: List[Dict[str, str]] = []
 
-            if hot_count > 0:
+            if mixed_df is not None and not mixed_df.isEmpty():
+                drop_case_tables(spark, split_case_tables)
+                mixed_cfg = dict(config)
+                mixed_cfg["_case3d_split_internal"] = True
+                mixed_cfg["use_latest_history_context_case3d"] = False
+                process_case_iii_soft_delete(
+                    spark,
+                    mixed_df,
+                    mixed_cfg,
+                    expected_rows=hot_count + cold_count,
+                )
+                snapshot_groups.append(
+                    snapshot_case_tables(spark, split_case_tables, "mixed_lane_case3d")
+                )
+
+            if hot_only_df is not None and not hot_only_df.isEmpty():
+                drop_case_tables(spark, split_case_tables)
                 hot_cfg = dict(config)
                 hot_cfg["_case3d_split_internal"] = True
                 hot_cfg["use_latest_history_context_case3d"] = True
                 hot_handled = process_case_iii_soft_delete_using_latest_history_context(
                     spark,
-                    hot_df,
+                    hot_only_df,
                     hot_cfg,
                     expected_rows=hot_count,
                 )
                 if not hot_handled:
-                    logger.info("Case III soft-delete hot path fell back to legacy processing")
+                    logger.info("Case III soft-delete hot-only lane fell back to legacy processing")
                     hot_fallback_cfg = dict(config)
                     hot_fallback_cfg["_case3d_split_internal"] = True
                     hot_fallback_cfg["use_latest_history_context_case3d"] = False
                     process_case_iii_soft_delete(
                         spark,
-                        hot_df,
+                        hot_only_df,
                         hot_fallback_cfg,
                         expected_rows=hot_count,
                     )
+                snapshot_groups.append(
+                    snapshot_case_tables(spark, split_case_tables, "hot_lane_case3d")
+                )
 
-            # Snapshot hot lane temp outputs before running cold lane (cold can recreate temp tables).
-            if hot_count > 0 and cold_count > 0:
-                for table_name in split_case_tables.keys():
-                    if spark.catalog.tableExists(table_name):
-                        hot_table_name = f"{table_name}_hot_split"
-                        spark.sql(f"DROP TABLE IF EXISTS {hot_table_name}")
-                        spark.sql(f"CREATE TABLE {hot_table_name} USING iceberg AS SELECT * FROM {table_name}")
-                        hot_snapshot_tables[table_name] = hot_table_name
-
-            if cold_count > 0:
+            if cold_only_df is not None and not cold_only_df.isEmpty():
+                drop_case_tables(spark, split_case_tables)
                 cold_cfg = dict(config)
                 cold_cfg["_case3d_split_internal"] = True
                 cold_cfg["use_latest_history_context_case3d"] = False
@@ -2947,6 +3092,7 @@ def process_case_iii_soft_delete(
                         config.get("force_cold_case3_broadcast", True),
                     )
                 )
+                cold_lane_df = cold_only_df
                 if force_cold_case3d_broadcast:
                     row_cap = int(
                         config.get(
@@ -2959,42 +3105,28 @@ def process_case_iii_soft_delete(
                             f"Cold Case III soft-delete broadcast guard failed: "
                             f"cold rows exceed cap={row_cap:,}"
                         )
-                    cold_df = F.broadcast(cold_df)
+                    cold_lane_df = F.broadcast(cold_only_df)
                     logger.info(
                         f"Forced broadcast enabled for cold Case III soft-delete input (cap={row_cap:,})"
                     )
                 process_case_iii_soft_delete(
                     spark,
-                    cold_df,
+                    cold_lane_df,
                     cold_cfg,
                     expected_rows=cold_count,
                 )
+                snapshot_groups.append(
+                    snapshot_case_tables(spark, split_case_tables, "cold_lane_case3d")
+                )
 
-            # Re-combine hot + cold temp outputs so downstream merge sees both lanes.
-            if hot_snapshot_tables:
-                for table_name, stage_name in split_case_tables.items():
-                    hot_part = None
-                    if table_name in hot_snapshot_tables and spark.catalog.tableExists(hot_snapshot_tables[table_name]):
-                        hot_part = spark.read.table(hot_snapshot_tables[table_name])
-                    cold_part = spark.read.table(table_name) if spark.catalog.tableExists(table_name) else None
-                    if hot_part is None and cold_part is None:
-                        continue
-                    if hot_part is not None and cold_part is not None:
-                        combined_df = hot_part.unionByName(cold_part, allowMissingColumns=True).dropDuplicates()
-                    elif hot_part is not None:
-                        combined_df = hot_part
-                    else:
-                        combined_df = cold_part
-                    write_case_table_bucketed(
-                        spark=spark,
-                        df=combined_df,
-                        table_name=table_name,
-                        config=config,
-                        stage=stage_name,
-                        expected_rows=expected_rows,
-                    )
-                for hot_table_name in hot_snapshot_tables.values():
-                    spark.sql(f"DROP TABLE IF EXISTS {hot_table_name}")
+            combine_case_table_snapshots(
+                spark=spark,
+                config=config,
+                table_stage_map=split_case_tables,
+                snapshot_groups=snapshot_groups,
+                expected_rows=expected_rows,
+            )
+            cleanup_snapshot_tables(spark, snapshot_groups)
             return
 
     if config.get("use_latest_history_context_case3d", True):
