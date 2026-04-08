@@ -23,6 +23,8 @@
   "case3_hot_window_months": 36,
   "force_case3_unified_on_any_overlap": false,
   "force_case3d_unified_on_any_overlap": false,
+  "use_working_set_latest_context": true,
+  "use_working_set_case3_summary_context": true,
   "force_cold_case3_broadcast": true,
   "cold_case3_broadcast_row_cap": 10000000,
   "columns": {
