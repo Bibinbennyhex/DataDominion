@@ -23,8 +23,6 @@ SNAPSHOT_INTERVAL = 12
 MAX_FILE_SIZE = 256
 HISTORY_LENGTH = 36
 CASE_TEMP_BUCKET_COUNT = 64
-WORKSET_LATEST_SUMMARY_TABLE = "temp_catalog.checkpointdb.workset_latest_summary"
-WORKSET_SUMMARY_CASE3_TABLE = "temp_catalog.checkpointdb.workset_summary_case3"
 CASE3_LATEST_MONTH_PATCH_TABLE = "temp_catalog.checkpointdb.case_3_latest_month_patch"
 CASE3_UNIFIED_LATEST_MONTH_PATCH_TABLE = "temp_catalog.checkpointdb.case_3_unified_latest_month_patch"
 CASE3D_LATEST_HISTORY_CONTEXT_PATCH_TABLE = "temp_catalog.checkpointdb.case_3d_latest_history_context_patch"
@@ -669,102 +667,12 @@ def get_latest_cols(config: Dict[str, Any]) -> List[str]:
     return runtime_cache["latest_summary_cols"]
 
 
-def _use_working_set_latest_context(config: Dict[str, Any]) -> bool:
-    return bool(config.get("use_working_set_latest_context", True))
-
-
-def _use_working_set_case3_summary_context(config: Dict[str, Any]) -> bool:
-    return bool(config.get("use_working_set_case3_summary_context", True))
-
-
-def get_latest_context_table(spark: SparkSession, config: Dict[str, Any]) -> str:
-    if _use_working_set_latest_context(config) and spark.catalog.tableExists(WORKSET_LATEST_SUMMARY_TABLE):
-        return WORKSET_LATEST_SUMMARY_TABLE
-    return config["latest_history_table"]
-
-
-def get_case3_summary_context_table(spark: SparkSession, config: Dict[str, Any]) -> str:
-    if _use_working_set_case3_summary_context(config) and spark.catalog.tableExists(WORKSET_SUMMARY_CASE3_TABLE):
-        return WORKSET_SUMMARY_CASE3_TABLE
-    return config["destination_table"]
-
-
 def get_case3_latest_month_patch_table(config: Dict[str, Any]) -> str:
     return config.get("_case3_latest_month_patch_table", CASE3_LATEST_MONTH_PATCH_TABLE)
 
 
 def get_case3d_latest_history_patch_table(config: Dict[str, Any]) -> str:
     return config.get("_case3d_latest_history_patch_table", CASE3D_LATEST_HISTORY_CONTEXT_PATCH_TABLE)
-
-
-def materialize_working_set_context_tables(
-    spark: SparkSession,
-    classified_df,
-    config: Dict[str, Any],
-) -> None:
-    pk = config["primary_column"]
-    prt = config["partition_column"]
-    ts = config["max_identifier_column"]
-    latest_summary_table = config["latest_history_table"]
-    summary_table = config["destination_table"]
-
-    classified_keys = classified_df.select(pk).distinct()
-    classified_keys.createOrReplaceTempView("classified_accounts_all")
-    logger.info("Working-set key scope built: classified_accounts_all")
-
-    case3_keys = (
-        classified_df
-        .filter(F.col("case_type") == "CASE_III")
-        .select(pk)
-        .distinct()
-    )
-    case3_keys.createOrReplaceTempView("case3_accounts_all")
-    logger.info("Working-set key scope built: case3_accounts_all")
-
-    if _use_working_set_latest_context(config):
-        latest_latest_df = (
-            spark.table(latest_summary_table)
-            .withColumn(
-                "_rn",
-                F.row_number().over(
-                    Window.partitionBy(pk).orderBy(F.col(prt).desc(), F.col(ts).desc())
-                ),
-            )
-            .filter(F.col("_rn") == 1)
-            .drop("_rn")
-        )
-        latest_context_df = classified_keys.join(
-            latest_latest_df,
-            on=pk,
-            how="left",
-        )
-        write_case_table_bucketed(
-            spark=spark,
-            df=latest_context_df,
-            table_name=WORKSET_LATEST_SUMMARY_TABLE,
-            config=config,
-            stage="workset_latest_summary_temp",
-            expected_rows=None,
-        )
-
-    if _use_working_set_case3_summary_context(config):
-        if case3_keys.limit(1).isEmpty():
-            summary_context_df = spark.table(summary_table).limit(0)
-        else:
-            summary_context_df = (
-                spark.table(summary_table)
-                .join(F.broadcast(case3_keys), on=pk, how="inner")
-            )
-        write_case_table_bucketed(
-            spark=spark,
-            df=summary_context_df,
-            table_name=WORKSET_SUMMARY_CASE3_TABLE,
-            config=config,
-            stage="workset_summary_case3_temp",
-            expected_rows=None,
-        )
-
-    logger.info("Working-set table creation completed")
 
 
 def get_summary_history_len(config: Dict[str, Any]) -> int:
@@ -1570,7 +1478,7 @@ def _backfill_hot_from_classified(
     pk = config['primary_column']
     prt = config['partition_column']
     ts = config['max_identifier_column']
-    summary_table = get_case3_summary_context_table(spark, config)
+    summary_table = config["destination_table"]
     history_len = get_summary_history_len(config)
     latest_history_len = get_latest_history_len(config)
     rolling_columns = config.get('rolling_columns', [])
@@ -1831,8 +1739,8 @@ def _softdelete_hot(
     pk = config['primary_column']
     prt = config['partition_column']
     ts = config['max_identifier_column']
-    summary_table = get_case3_summary_context_table(spark, config)
-    latest_summary_table = get_latest_context_table(spark, config)
+    summary_table = config["destination_table"]
+    latest_summary_table = config["latest_history_table"]
     history_len = get_summary_history_len(config)
     latest_history_len = get_latest_history_len(config)
     rolling_columns = config.get('rolling_columns', [])
@@ -2025,8 +1933,8 @@ def _backfill_legacy(
     pk = config['primary_column']
     prt = config['partition_column']
     ts = config['max_identifier_column']
-    summary_table = get_case3_summary_context_table(spark, config)
-    latest_summary_table = get_latest_context_table(spark, config)
+    summary_table = config["destination_table"]
+    latest_summary_table = config["latest_history_table"]
     latest_cols = set(get_latest_cols(config))
     history_len = get_summary_history_len(config)
     latest_history_len = get_latest_history_len(config)
@@ -2172,7 +2080,9 @@ def _backfill_legacy(
             END AS {arr}
         """)
 
-    exclude_backfill = temp_exclusions | {"prior_month", "prior_ts", "months_since_prior"} | \
+    # Drop inherited history cols from classified input; rebuilt history aliases below
+    # must be the only *_history columns to avoid ambiguous references in grid derivation.
+    exclude_backfill = temp_exclusions | set(history_cols) | {"prior_month", "prior_ts", "months_since_prior"} | \
                        {f"prior_{a}" for a in history_cols} | \
                        {c for c in df.columns if c.startswith("_prepared_")}
     backfill_cols = [c for c in df.columns if c not in exclude_backfill]
@@ -2336,8 +2246,8 @@ def _softdelete_legacy(
     pk = config['primary_column']
     prt = config['partition_column']
     ts = config['max_identifier_column']
-    summary_table = get_case3_summary_context_table(spark, config)
-    latest_summary_table = get_latest_context_table(spark, config)
+    summary_table = config["destination_table"]
+    latest_summary_table = config["latest_history_table"]
     latest_cols = set(get_latest_cols(config))
     history_len = get_summary_history_len(config)
     latest_history_len = get_latest_history_len(config)
@@ -4351,8 +4261,6 @@ def run_pipeline(spark: SparkSession, config: Dict[str, Any]):
         )
         logger.info(f"Soft-delete rows in batch: {soft_delete_count:,}")
 
-        materialize_working_set_context_tables(spark, classified, config)
-
         # =========================================================================
         # STEP 2: PROCESS EACH CASE AND WRITE TO TEMP TABLE
         # Process in CORRECT order: Backfill -> New -> Bulk Historical -> Forward
@@ -4473,17 +4381,11 @@ def cleanup(spark: SparkSession):
         'case_3d_latest_history_context_patch',
         'case_3d_unified_latest_history_patch',
         'case_4',
-        'workset_latest_summary',
-        'workset_summary_case3',
     ]
 
     for table in cleanup_tables:
         spark.sql(f"DROP TABLE IF EXISTS temp_catalog.checkpointdb.{table}")
         logger.info(f"Cleaned {table}")
-
-    for view_name in ["classified_accounts_all", "case3_accounts_all"]:
-        if spark.catalog.tableExists(view_name):
-            spark.catalog.dropTempView(view_name)
 
     logger.info("CLEANUP COMPLETED")
     logger.info("=" * 60)
