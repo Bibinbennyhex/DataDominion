@@ -1422,7 +1422,8 @@ def load_and_classify_accounts(spark: SparkSession, config: Dict[str, Any]):
             F.col("n.*"),
             F.col("s.max_existing_month"),
             F.col("s.max_existing_ts"),
-            F.col("s.max_month_int")
+            F.col("s.max_month_int"),
+            *[F.col(f"s.{col_name}") for col_name in history_columns]
         )
         .withColumn(
             "initial_case_type",
@@ -1501,8 +1502,7 @@ def categorize_updates(spark: SparkSession, case_iii_df, config: Dict[str, Any],
     logger.info("=" * 80)
 
     pk = config['primary_column']
-    prt = config['partition_column']
-    hot_window = int(config.get('case3_hot_window_months', 3))
+    hot_window = 36
 
     hot_df  = case_iii_df.filter(F.col("MONTH_DIFF") <= hot_window)
     cold_df = case_iii_df.filter(F.col("MONTH_DIFF") > hot_window)
@@ -1549,17 +1549,28 @@ def _backfill_hot(
     config: Dict[str, Any],
     expected_rows: Optional[int] = None,
 ) -> bool:
+    return _backfill_hot_from_classified(spark, df, config, expected_rows=expected_rows)
+
+
+def _backfill_hot_from_classified(
+    spark: SparkSession,
+    df,
+    config: Dict[str, Any],
+    expected_rows: Optional[int] = None,
+) -> bool:
     """
-    Hot-lane backfill: rebuild rolling arrays from latest_summary context.
-    Identical logic to process_case_iii_using_latest_history_context but
-    stripped of the split orchestration wrapper.
-    Returns True if handled, False to signal caller should fall back.
+    Hot-lane backfill driven by classified-row latest-history context only.
+
+    Arrays are patched by MONTH_DIFF positions and reused to derive:
+      1) latest_summary history patch (full latest-history length),
+      2) case_3a rows (backfill month rows),
+      3) case_3b rows (future summary propagation rows),
+      4) latest-month scalar patch table (MONTH_DIFF == 0).
     """
     pk = config['primary_column']
     prt = config['partition_column']
     ts = config['max_identifier_column']
     summary_table = get_case3_summary_context_table(spark, config)
-    latest_summary_table = get_latest_context_table(spark, config)
     history_len = get_summary_history_len(config)
     latest_history_len = get_latest_history_len(config)
     rolling_columns = config.get('rolling_columns', [])
@@ -1570,31 +1581,36 @@ def _backfill_hot(
         return True
 
     history_cols = [f"{rc['name']}_history" for rc in rolling_columns]
-    latest_cols = set(get_latest_cols(config))
-    if not all(c in latest_cols for c in history_cols):
-        logger.warning(
-            "_backfill_hot: latest_summary missing required *_history columns; signalling fallback"
-        )
+    required_cols = ["max_existing_month", "max_existing_ts", "max_month_int", "MONTH_DIFF"] + history_cols
+    missing_cols = [c for c in required_cols if c not in df.columns]
+    if missing_cols:
+        logger.warning(f"_backfill_hot_from_classified: missing classified columns {missing_cols}; signalling fallback")
         return False
 
-    global_latest_month = (
-        df.agg(F.max("max_existing_month").alias("g")).first()["g"]
+    latest_cols = set(get_latest_cols(config))
+    if not all(c in latest_cols for c in history_cols):
+        logger.warning("_backfill_hot_from_classified: latest_summary schema missing required *_history columns")
+        return False
+
+    dedup_w = Window.partitionBy(pk, "MONTH_DIFF").orderBy(F.col(ts).desc(), F.col("month_int").desc())
+    dedup_df = (
+        df
+        .withColumn("_rn", F.row_number().over(dedup_w))
+        .filter(F.col("_rn") == 1)
+        .drop("_rn")
     )
-    if global_latest_month is None:
+    if dedup_df.isEmpty():
         return True
 
-    # ── split: latest-month rows vs older rows ────────────────────────────
-    split_counts = (
-        df.agg(
-            F.sum(F.when(F.col(prt) == F.lit(global_latest_month), 1).otherwise(0)).alias("latest_count"),
-            F.sum(F.when(F.col(prt) <  F.lit(global_latest_month), 1).otherwise(0)).alias("older_count"),
-        ).first()
-    )
+    split_counts = dedup_df.agg(
+        F.sum(F.when(F.col("MONTH_DIFF") == 0, 1).otherwise(0)).alias("latest_count"),
+        F.sum(F.when(F.col("MONTH_DIFF") > 0, 1).otherwise(0)).alias("older_count"),
+    ).first()
     latest_count = int(split_counts["latest_count"] or 0)
-    older_count  = int(split_counts["older_count"]  or 0)
+    older_count = int(split_counts["older_count"] or 0)
     logger.info(
-        f"_backfill_hot: latest_month={global_latest_month} "
-        f"latest_rows={latest_count:,} older_rows={older_count:,}"
+        f"_backfill_hot_from_classified: rows={latest_count + older_count:,} "
+        f"latest_month_rows={latest_count:,} older_rows={older_count:,}"
     )
 
     temp_exclusions = {
@@ -1603,13 +1619,11 @@ def _backfill_hot(
         "min_month_for_new_account", "count_months_for_new_account",
     }
 
-    # ── latest-month patch (index-0 update on the current latest-month row) ─
+    # latest-month scalar patch table (MONTH_DIFF == 0 only)
     if latest_count > 0:
-        dedup_w = Window.partitionBy(pk, prt).orderBy(F.col(ts).desc())
         latest_dedup = (
-            df.filter(F.col(prt) == F.lit(global_latest_month))
-            .withColumn("_rn", F.row_number().over(dedup_w))
-            .filter(F.col("_rn") == 1).drop("_rn")
+            dedup_df
+            .filter(F.col("MONTH_DIFF") == 0)
         )
         src_cols = [c for c in latest_dedup.columns if c not in temp_exclusions and not c.startswith("_prepared_")]
         val_cols = [F.col(rc['mapper_column']).alias(f"latest_val_{rc['name']}") for rc in rolling_columns]
@@ -1622,59 +1636,44 @@ def _backfill_hot(
             expected_rows=latest_count,
         )
 
-    if older_count == 0:
-        return True
-
-    # ── peer map: collect all backfill values per account ────────────────
+    # Build per-account MONTH_DIFF map from backfill rows.
     val_struct_fields = [
-        F.col(rc['mapper_column']).alias(f"val_{rc['name']}") for rc in rolling_columns
+        F.col(f"_prepared_{rc['name']}" if f"_prepared_{rc['name']}" in dedup_df.columns else rc['mapper_column'])
+        .alias(f"val_{rc['name']}")
+        for rc in rolling_columns
     ]
     peer_window = Window.partitionBy(pk)
-    backfill_all = df.withColumn(
+    backfill_all = dedup_df.withColumn(
         "peer_map",
         F.map_from_entries(
-            F.collect_list(F.struct(F.col("month_int"), F.struct(*val_struct_fields))).over(peer_window)
+            F.collect_list(F.struct(F.col("MONTH_DIFF").cast("int"), F.struct(*val_struct_fields))).over(peer_window)
         ),
     )
-    peer_per_account = backfill_all.select(pk, "peer_map").dropDuplicates([pk])
-    account_stats = (
+    account_patch_base = (
         backfill_all.groupBy(pk).agg(
-            F.min("month_int").alias("min_backfill_int"),
-            F.max("month_int").alias("max_backfill_int"),
+            F.first("max_existing_month", ignorenulls=True).alias("anchor_month"),
+            F.max("max_existing_ts").alias("anchor_ts"),
+            F.first("max_month_int", ignorenulls=True).alias("anchor_month_int"),
             F.max(F.col(ts)).alias("max_backfill_ts"),
+            F.max("MONTH_DIFF").alias("max_month_diff"),
+            F.first("peer_map", ignorenulls=True).alias("peer_map"),
+            *[F.first(F.col(h), ignorenulls=True).alias(h) for h in history_cols],
         )
-    )
-
-    # ── latest_summary context for affected accounts ──────────────────────
-    affected = df.select(pk).distinct()
-    latest_ctx = (
-        spark.table(latest_summary_table)
-        .select(pk, prt, ts, *[F.col(c) for c in history_cols], F.col(SOFT_DELETE_COLUMN))
-        .join(affected, pk, "inner")
-        .filter(~F.coalesce(F.col(SOFT_DELETE_COLUMN), F.lit("")).isin(*SOFT_DELETE_CODES))
-        .drop(SOFT_DELETE_COLUMN)
-        .withColumn("latest_month_int", F.expr(month_to_int_expr(prt)))
-    )
-    if latest_ctx.isEmpty():
-        logger.warning("_backfill_hot: no non-deleted latest_summary context; signalling fallback")
-        return False
-
-    # ── latest-summary history patch ──────────────────────────────────────
-    patch_base = (
-        latest_ctx
-        .join(peer_per_account, pk, "inner")
-        .join(account_stats, pk, "inner")
+        .filter(F.col("anchor_month_int").isNotNull())
         .withColumn(
             "required_size",
             F.greatest(
                 F.size(F.col(history_cols[0])),
-                F.col("latest_month_int") - F.col("min_backfill_int") + F.lit(1),
+                F.col("max_month_diff") + F.lit(1),
                 F.lit(latest_history_len),
             ),
         )
     )
-    patch_base.createOrReplaceTempView("_hot_patch_base")
+    if account_patch_base.isEmpty():
+        logger.warning("_backfill_hot_from_classified: no account anchor context rows; signalling fallback")
+        return False
 
+    account_patch_base.createOrReplaceTempView("_hot_patch_base")
     hist_patch_exprs = []
     for rc in rolling_columns:
         hcol = f"{rc['name']}_history"
@@ -1684,8 +1683,8 @@ def _backfill_hot(
             transform(
                 sequence(0, required_size - 1),
                 i -> CASE
-                    WHEN peer_map[CAST(latest_month_int - i AS INT)] IS NOT NULL
-                    THEN CAST(peer_map[CAST(latest_month_int - i AS INT)].{vcol} AS {dtype})
+                    WHEN peer_map[CAST(i AS INT)] IS NOT NULL
+                    THEN CAST(peer_map[CAST(i AS INT)].{vcol} AS {dtype})
                     ELSE element_at(
                         concat({hcol}, array_repeat(CAST(NULL AS {dtype}), greatest(required_size - size({hcol}), 0))),
                         i + 1
@@ -1695,8 +1694,8 @@ def _backfill_hot(
         """)
 
     latest_hist_patch_df = spark.sql(f"""
-        SELECT {pk}, {prt},
-               GREATEST({ts}, max_backfill_ts) AS {ts},
+        SELECT {pk}, anchor_month AS {prt},
+               GREATEST(anchor_ts, max_backfill_ts) AS {ts},
                {', '.join(hist_patch_exprs)}
         FROM _hot_patch_base
     """)
@@ -1715,30 +1714,32 @@ def _backfill_hot(
         expected_rows=expected_rows,
     )
 
-    # ── case_3a: new summary rows for older backfill months ───────────────
-    older = backfill_all.filter(F.col(prt) < F.lit(global_latest_month))
+    # case_3a: build backfill month rows from patched latest anchor.
     older_ctx = (
-        older.alias("c")
-        .join(latest_ctx.select(pk, "latest_month_int", *history_cols).alias("l"), pk, "inner")
+        backfill_all.filter(F.col("MONTH_DIFF") > 0).alias("c")
+        .join(
+            latest_hist_patch_df.select(pk, *history_cols).alias("l"),
+            pk,
+            "inner",
+        )
+        .select(
+            F.col("c.*"),
+            *[F.col(f"l.{h}").alias(f"patched_{h}") for h in history_cols],
+        )
     )
     older_ctx.createOrReplaceTempView("_hot_older_ctx")
 
-    exclude_base = temp_exclusions | {c for c in df.columns if c.startswith("_prepared_")}
-    base_cols = [f"c.{c}" for c in df.columns if c not in exclude_base]
+    exclude_base = temp_exclusions | {"peer_map"} | set(history_cols) | {c for c in dedup_df.columns if c.startswith("_prepared_")}
+    base_cols = [f"c.{c}" for c in dedup_df.columns if c not in exclude_base]
 
     case3a_exprs = []
     for rc in rolling_columns:
         hcol = f"{rc['name']}_history"
-        vcol = f"val_{rc['name']}"
         dtype = rc.get('type', rc.get('data_type', 'String')).upper()
         case3a_exprs.append(f"""
             transform(
                 sequence(0, {history_len - 1}),
-                pos -> CASE
-                    WHEN c.peer_map[CAST(c.month_int - pos AS INT)] IS NOT NULL
-                    THEN CAST(c.peer_map[CAST(c.month_int - pos AS INT)].{vcol} AS {dtype})
-                    ELSE element_at(c.{hcol}, (c.latest_month_int - c.month_int + pos + 1))
-                END
+                pos -> CAST(element_at(c.patched_{hcol}, c.MONTH_DIFF + pos + 1) AS {dtype})
             ) AS {hcol}
         """)
 
@@ -1758,7 +1759,14 @@ def _backfill_hot(
         config=config, stage="case_3a_temp", expected_rows=expected_rows,
     )
 
-    # ── case_3b: forward-propagate to future summary rows ─────────────────
+    # case_3b: update future summary rows from patched latest anchor.
+    account_stats = (
+        dedup_df.groupBy(pk).agg(
+            F.min("month_int").alias("min_backfill_int"),
+            F.max("month_int").alias("max_backfill_int"),
+            F.max(F.col(ts)).alias("max_backfill_ts"),
+        )
+    )
     summary_targets = (
         spark.table(summary_table)
         .select(pk, prt, ts)
@@ -1771,30 +1779,32 @@ def _backfill_hot(
     )
     future_ctx = (
         summary_targets.alias("s")
-        .join(latest_ctx.select(pk, "latest_month_int", *history_cols).alias("l"), pk, "inner")
-        .join(peer_per_account.alias("p"), pk, "inner")
-        .filter(F.col("summary_month_int") <= F.col("latest_month_int"))
+        .join(account_patch_base.select(pk, "anchor_month_int").alias("a"), pk, "inner")
+        .join(latest_hist_patch_df.select(pk, *history_cols).alias("l"), pk, "inner")
+        .withColumn("anchor_diff", F.col("a.anchor_month_int") - F.col("s.summary_month_int"))
+        .filter(F.col("anchor_diff") >= 0)
+        .select(
+            F.col("s.*"),
+            F.col("a.anchor_month_int").alias("anchor_month_int"),
+            F.col("anchor_diff"),
+            *[F.col(f"l.{h}").alias(f"patched_{h}") for h in history_cols],
+        )
     )
     if not future_ctx.isEmpty():
         future_ctx.createOrReplaceTempView("_hot_future_ctx")
         case3b_exprs = []
         for rc in rolling_columns:
             hcol = f"{rc['name']}_history"
-            vcol = f"val_{rc['name']}"
             dtype = rc.get('type', rc.get('data_type', 'String')).upper()
             case3b_exprs.append(f"""
                 transform(
                     sequence(0, {history_len - 1}),
-                    pos -> CASE
-                        WHEN p.peer_map[CAST(s.summary_month_int - pos AS INT)] IS NOT NULL
-                        THEN CAST(p.peer_map[CAST(s.summary_month_int - pos AS INT)].{vcol} AS {dtype})
-                        ELSE element_at(l.{hcol}, (l.latest_month_int - s.summary_month_int + pos + 1))
-                    END
+                    pos -> CAST(element_at(s.patched_{hcol}, anchor_diff + pos + 1) AS {dtype})
                 ) AS {hcol}
             """)
         case3b_df = spark.sql(f"""
             SELECT s.{pk}, s.{prt},
-                   GREATEST(s.{ts}, p.max_backfill_ts) AS {ts},
+                   GREATEST(s.{ts}, s.max_backfill_ts) AS {ts},
                    {', '.join(case3b_exprs)}
             FROM _hot_future_ctx s
         """)
@@ -2028,18 +2038,10 @@ def _backfill_legacy(
     if df is None or df.isEmpty():
         return
 
-    global_latest_month = df.agg(F.max("max_existing_month").alias("g")).first()["g"]
-    if global_latest_month is None:
-        return
-
-    split_counts = (
-        df.agg(
-            F.sum(F.when(F.col(prt) == F.lit(global_latest_month), 1).otherwise(0)).alias("latest_count"),
-            F.sum(F.when(F.col(prt) <  F.lit(global_latest_month), 1).otherwise(0)).alias("older_count"),
-        ).first()
-    )
-    latest_count = int(split_counts["latest_count"] or 0)
-    older_count  = int(split_counts["older_count"]  or 0)
+    latest_rows = df.filter(F.col("MONTH_DIFF") == 0)
+    older_df = df.filter(F.col("MONTH_DIFF") > 0)
+    latest_count = latest_rows.count() if not latest_rows.isEmpty() else 0
+    older_count  = older_df.count() if not older_df.isEmpty() else 0
 
     temp_exclusions = {
         "month_int", "max_existing_month", "max_existing_ts", "max_month_int",
@@ -2052,7 +2054,7 @@ def _backfill_legacy(
     if latest_count > 0:
         dedup_w = Window.partitionBy(pk, prt).orderBy(F.col(ts).desc())
         latest_dedup = (
-            df.filter(F.col(prt) == F.lit(global_latest_month))
+            latest_rows
             .withColumn("_rn", F.row_number().over(dedup_w))
             .filter(F.col("_rn") == 1).drop("_rn")
         )
@@ -2070,7 +2072,6 @@ def _backfill_legacy(
     if older_count == 0:
         return
 
-    older_df = df.filter(F.col(prt) < F.lit(global_latest_month))
     if broadcast_input:
         row_cap = int(config.get("cold_case3_broadcast_row_cap", 10_000_000))
         if older_count > row_cap:
@@ -2098,11 +2099,11 @@ def _backfill_legacy(
     affected = older_df.select(pk).distinct()
     summary_df = (
         spark.sql(f"""
-            SELECT {', '.join(['pk', prt, ts] + history_cols)}
+            SELECT {', '.join([pk, prt, ts] + history_cols)}
             FROM {summary_table}
             WHERE {prt} >= '{earliest_partition}' AND {prt} <= '{latest_partition}'
               AND COALESCE({SOFT_DELETE_COLUMN}, '') NOT IN ({delete_codes_sql})
-        """.replace("'pk'", pk))
+        """)
         .join(F.broadcast(affected), pk, "left_semi")
         .withColumn("month_int", F.expr(month_to_int_expr(prt)))
     )
@@ -2725,16 +2726,7 @@ def process_case_iii_mixed(
 
     if use_split:
         # ── experimental split path ───────────────────────────────────────
-        # Determine hot cutoff from the global latest month in this batch
-        hot_window = max(1, int(config.get("case3_hot_window_months", 36)))
-        global_latest_month = (
-            mixed_df.agg(F.max("max_existing_month").alias("g")).first()["g"]
-        )
-        if global_latest_month is not None:
-            latest_int = int(global_latest_month[:4]) * 12 + int(global_latest_month[5:7])
-            hot_cutoff_int = latest_int - (hot_window - 1)
-        else:
-            hot_cutoff_int = 0  # treat everything as cold if unknown
+        hot_window = 36
 
         for op_df, op_count, label, hot_fn, cold_fn in [
             (backfill_df, backfill_count, "backfill", _backfill_hot,    _backfill_legacy),
@@ -2742,8 +2734,8 @@ def process_case_iii_mixed(
         ]:
             if op_count == 0:
                 continue
-            hot_sub  = op_df.filter(F.col("month_int") >= F.lit(hot_cutoff_int))
-            cold_sub = op_df.filter(F.col("month_int") <  F.lit(hot_cutoff_int))
+            hot_sub  = op_df.filter(F.col("MONTH_DIFF") <= F.lit(hot_window))
+            cold_sub = op_df.filter(F.col("MONTH_DIFF") >  F.lit(hot_window))
 
             drop_case_tables(spark, split_case_tables)
             if not hot_sub.isEmpty():
@@ -2851,11 +2843,13 @@ def process_case_i(case_i_df, config: Dict[str, Any]):
 
 def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any], expected_rows: Optional[int] = None):
     """
-    Process Case II - shift existing arrays for forward entries
-    
-    Logic:
-    - MONTH_DIFF == 1: [new_value, prev[0:35]]
-    - MONTH_DIFF > 1:  [new_value, NULLs_for_gap, prev[0:35-gap]]
+    Process Case II from classified latest-summary anchor arrays.
+
+    Flow:
+      1) Build per-account full latest-history anchor (latest_history_len) by
+         patching forward values by MONTH_DIFF relative to max_existing_month.
+      2) Derive each forward row's 36-month summary history from the full anchor.
+      3) Persist summary result to case_2 and full latest result to case_2_latest.
     """
     process_start_time = time.time()
     logger.info("=" * 80)
@@ -2866,94 +2860,129 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any], exp
 
     pk = config['primary_column']
     prt = config['partition_column']
-    latest_summary_table = config["latest_history_table"]
+    ts = config['max_identifier_column']
     history_len = get_summary_history_len(config)
+    latest_history_len = get_latest_history_len(config)
     rolling_columns = config.get('rolling_columns', [])
     grid_columns = config.get('grid_columns', [])
-
-    # Get affected accounts
-    affected_keys = case_ii_df.select(pk).distinct()
-
-    # Load latest summary for affected accounts
-    logger.info(f"Loading latest summary for Affected Accounts")
-
-    # Select needed columns from latest summary
     history_cols = [f"{rc['name']}_history" for rc in rolling_columns]
-    latest_summary_cols = set(get_latest_cols(config))
-    if not all(col in latest_summary_cols for col in history_cols):
-        logger.warning("Case II requires *_history columns in latest_summary; skipping Case II processing")
+
+    required_cols = ["max_existing_month", "max_existing_ts", "max_month_int", "MONTH_DIFF"] + history_cols
+    missing_cols = [c for c in required_cols if c not in case_ii_df.columns]
+    if missing_cols:
+        logger.warning(f"Case II missing classified context columns {missing_cols}; skipping Case II processing")
         return
 
-    # Create temp view for affected keys
-    affected_keys.createOrReplaceTempView("case_ii_affected_keys")
-
-    # Use latest_summary only (one row per account) and exclude deleted contexts.
-    latest_base_df = (
-        spark.table(latest_summary_table)
-        .join(affected_keys, on=pk, how="inner")
-        .filter(~F.coalesce(F.col(SOFT_DELETE_COLUMN), F.lit("")).isin(*SOFT_DELETE_CODES))
+    # Resolve same-account, same MONTH_DIFF collisions by latest timestamp.
+    dedup_w = Window.partitionBy(pk, "MONTH_DIFF").orderBy(F.col(ts).desc(), F.col("month_int").desc())
+    dedup_df = (
+        case_ii_df
+        .withColumn("_rn", F.row_number().over(dedup_w))
+        .filter(F.col("_rn") == 1)
+        .drop("_rn")
     )
-    latest_select_exprs = [F.col(pk), F.col(prt)] + [F.col(c) for c in history_cols]
-    latest_for_affected = latest_base_df.select(*latest_select_exprs).dropDuplicates([pk, prt]).withColumn(
-        "prev_month_int",
-        F.expr(month_to_int_expr(prt))
-    )
+    if dedup_df.isEmpty():
+        logger.info("No Case II rows after dedupe")
+        return
 
-    # Collect peer forward entries into MAP for gap filling (Chaining)
-    # Map Key: month_int, Map Value: Struct(val_col1, val_col2...)
+    # Skip and log unresolved/no-context rows.
+    anchor_available = F.col("max_month_int").isNotNull()
+    for hcol in history_cols:
+        anchor_available = anchor_available & F.col(hcol).isNotNull()
+    case_ii_resolved = dedup_df.filter(anchor_available)
+    total_rows = dedup_df.count()
+    resolved_rows = case_ii_resolved.count()
+    unresolved_rows = total_rows - resolved_rows
+    if unresolved_rows > 0:
+        logger.warning(f"Case II unresolved rows skipped (missing latest_summary anchor context): {unresolved_rows:,}")
+    if resolved_rows == 0:
+        logger.warning("No Case II rows with anchor context; skipping Case II processing")
+        return
+
+    # Build per-account peer map keyed by MONTH_DIFF.
     val_struct_fields = []
     for rc in rolling_columns:
         src_col = rc.get('mapper_column', rc.get('source_column', rc['name']))
-        prepared_col = f"_prepared_{rc['name']}"
-        value_col = prepared_col if prepared_col in case_ii_df.columns else src_col
+        value_col = f"_prepared_{rc['name']}" if f"_prepared_{rc['name']}" in case_ii_resolved.columns else src_col
         val_struct_fields.append(F.col(value_col).alias(f"val_{rc['name']}"))
 
     peer_window = Window.partitionBy(pk)
-    case_ii_df = case_ii_df.withColumn(
-        "peer_map", 
+    case_ii_with_peers = case_ii_resolved.withColumn(
+        "peer_map",
         F.map_from_entries(
             F.collect_list(
                 F.struct(
-                    F.col("month_int"), 
+                    F.col("MONTH_DIFF").cast("int"),
                     F.struct(*val_struct_fields)
                 )
             ).over(peer_window)
         )
     )
 
-    # Build SQL for array shifting (resolved accounts with non-deleted latest context)
-    shift_exprs = []
+    # Per-account full latest-history anchor context.
+    account_anchor = (
+        case_ii_with_peers.groupBy(pk).agg(
+            F.first("max_existing_month", ignorenulls=True).alias("anchor_month"),
+            F.max("max_existing_ts").alias("anchor_ts"),
+            F.first("max_month_int", ignorenulls=True).alias("anchor_month_int"),
+            F.max("MONTH_DIFF").alias("max_forward_diff"),
+            F.max(F.col(ts)).alias("max_forward_ts"),
+            F.first("peer_map", ignorenulls=True).alias("peer_map"),
+            *[F.first(F.col(h), ignorenulls=True).alias(h) for h in history_cols],
+        )
+        .withColumn(
+            "required_size",
+            F.greatest(
+                F.size(F.col(history_cols[0])) + F.col("max_forward_diff"),
+                F.lit(latest_history_len),
+            ),
+        )
+    )
+    account_anchor.createOrReplaceTempView("case_ii_anchor_base")
+
+    full_anchor_exprs = []
     for rc in rolling_columns:
-        array_name = f"{rc['name']}_history"
-        mapper_column = rc['mapper_column']
-        prepared_col = f"_prepared_{rc['name']}"
-        current_value_col = prepared_col if prepared_col in case_ii_df.columns else mapper_column
-        val_col_name = f"val_{rc['name']}"
-        month_diff_expr = "(c.month_int - p.prev_month_int)"
+        hcol = f"{rc['name']}_history"
+        vcol = f"val_{rc['name']}"
+        dtype = rc.get('type', rc.get('data_type', 'String')).upper()
+        full_anchor_exprs.append(f"""
+            transform(
+                sequence(0, required_size - 1),
+                i -> CASE
+                    WHEN peer_map[CAST(max_forward_diff - i AS INT)] IS NOT NULL
+                    THEN CAST(peer_map[CAST(max_forward_diff - i AS INT)].{vcol} AS {dtype})
+                    WHEN (max_forward_diff - i) <= 0 THEN
+                        element_at(
+                            concat({hcol}, array_repeat(CAST(NULL AS {dtype}), greatest(required_size - size({hcol}), 0))),
+                            CAST(i - max_forward_diff + 1 AS INT)
+                        )
+                    ELSE CAST(NULL AS {dtype})
+                END
+            ) AS {hcol}
+        """)
 
-        shift_expr = f"""
-            CASE
-                WHEN {month_diff_expr} = 1 THEN
-                    slice(concat(array(c.{current_value_col}), p.{array_name}), 1, {history_len})
-                WHEN {month_diff_expr} > 1 THEN
-                    slice(
-                        concat(
-                            array(c.{current_value_col}),
-                            transform(
-                                sequence(1, {month_diff_expr} - 1),
-                                i -> c.peer_map[CAST(c.month_int - i AS INT)].{val_col_name}
-                            ),
-                            p.{array_name}
-                        ),
-                        1, {history_len}
-                    )
-                ELSE
-                    concat(array(c.{current_value_col}), array_repeat(NULL, {history_len - 1}))
-            END as {array_name}
-        """
-        shift_exprs.append(shift_expr)
+    latest_month_expr = (
+        "format_string('%04d-%02d', "
+        "CAST(floor((anchor_month_int + max_forward_diff - 1) / 12) AS INT), "
+        "CAST(((anchor_month_int + max_forward_diff - 1) % 12) + 1 AS INT))"
+    )
+    full_anchor_df = spark.sql(f"""
+        SELECT {pk},
+               max_forward_diff,
+               {latest_month_expr} AS latest_forward_month,
+               GREATEST(anchor_ts, max_forward_ts) AS latest_forward_ts,
+               {', '.join(full_anchor_exprs)}
+        FROM case_ii_anchor_base
+    """)
+    for rc in rolling_columns:
+        full_anchor_df = full_anchor_df.withColumn(
+            f"{rc['name']}_history",
+            F.slice(F.col(f"{rc['name']}_history"), 1, latest_history_len),
+        )
 
-    # Get non-array columns from current record
+    full_anchor_df.createOrReplaceTempView("case_ii_full_anchor")
+
+    # Non-history carry-through columns from input records.
     exclude_cols = {
         "month_int",
         "max_existing_month",
@@ -2967,59 +2996,36 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any], exp
         "peer_map"
     }
     exclude_cols.update(history_cols)
-    exclude_cols.update([c for c in case_ii_df.columns if c.startswith("_prepared_")])
-    current_cols = [c for c in case_ii_df.columns if c not in exclude_cols]
-    current_select = ", ".join([f"c.{col}" for col in current_cols])
+    exclude_cols.update([c for c in case_ii_with_peers.columns if c.startswith("_prepared_")])
+    current_cols = [c for c in case_ii_with_peers.columns if c not in exclude_cols]
+    current_select = ", ".join([f"r.{col}" for col in current_cols])
 
-    latest_context_keys = latest_for_affected.select(pk).distinct().withColumn("_has_latest_context", F.lit(1))
-    case_ii_with_context = case_ii_df.join(latest_context_keys, on=pk, how="left")
-    case_ii_resolved = case_ii_with_context.filter(F.col("_has_latest_context").isNotNull()).drop("_has_latest_context")
-    case_ii_unresolved = case_ii_with_context.filter(F.col("_has_latest_context").isNull()).drop("_has_latest_context")
+    case_ii_with_peers.createOrReplaceTempView("case_ii_rows")
+    summary_hist_exprs = []
+    for rc in rolling_columns:
+        hcol = f"{rc['name']}_history"
+        dtype = rc.get('type', rc.get('data_type', 'String')).upper()
+        summary_hist_exprs.append(f"""
+            transform(
+                sequence(0, {history_len - 1}),
+                pos -> CAST(
+                    element_at(a.{hcol}, (a.max_forward_diff - r.MONTH_DIFF) + pos + 1)
+                    AS {dtype}
+                )
+            ) AS {hcol}
+        """)
 
-    result_parts = []
-
-    if not case_ii_resolved.isEmpty():
-        case_ii_resolved.createOrReplaceTempView("case_ii_records")
-        latest_for_affected.createOrReplaceTempView("latest_summary_affected")
-        sql = f"""
-            SELECT 
-                {current_select},
-                {', '.join(shift_exprs)}
-            FROM case_ii_records c
-            JOIN latest_summary_affected p ON c.{pk} = p.{pk}
-        """
-        result_parts.append(spark.sql(sql))
-
-    # Accounts with no non-deleted latest context are treated as Case I style initialization.
-    if not case_ii_unresolved.isEmpty():
-        unresolved_select_exprs = [F.col(c) for c in current_cols]
-        for rc in rolling_columns:
-            array_name = f"{rc['name']}_history"
-            mapper_column = rc['mapper_column']
-            prepared_col = f"_prepared_{rc['name']}"
-            value_col = prepared_col if prepared_col in case_ii_unresolved.columns else mapper_column
-            value_type = case_ii_unresolved.schema[value_col].dataType
-            init_history_expr = F.concat(
-                F.array(F.col(value_col)),
-                F.array_repeat(F.lit(None).cast(value_type), history_len - 1)
-            )
-            unresolved_select_exprs.append(
-                init_history_expr.alias(array_name)
-            )
-        result_parts.append(case_ii_unresolved.select(*unresolved_select_exprs))
-
-    if not result_parts:
-        logger.warning("No Case II rows generated after context split")
-        return
-
-    if len(result_parts) == 1:
-        result = result_parts[0]
-    else:
-        result = result_parts[0].unionByName(result_parts[1])
+    result = spark.sql(f"""
+        SELECT
+            {current_select},
+            {', '.join(summary_hist_exprs)}
+        FROM case_ii_rows r
+        JOIN case_ii_full_anchor a
+          ON r.{pk} = a.{pk}
+    """)
 
     # Generate grid columns
     for gc in grid_columns:
-        # Use 'mapper_rolling_column' to match original format
         source_rolling = gc.get('mapper_rolling_column', gc.get('source_history', ''))
         source_history = f"{source_rolling}_history"
         placeholder = gc.get('placeholder', '?')
@@ -3043,6 +3049,35 @@ def process_case_ii(spark: SparkSession, case_ii_df, config: Dict[str, Any], exp
         config=config,
         stage="case_2_temp",
         expected_rows=expected_rows,
+    )
+
+    # Latest-summary target rows (full latest-history arrays from patched anchor).
+    latest_meta_w = Window.partitionBy(pk).orderBy(F.col("MONTH_DIFF").desc(), F.col(ts).desc(), F.col("month_int").desc())
+    latest_meta = (
+        case_ii_resolved
+        .withColumn("_rn", F.row_number().over(latest_meta_w))
+        .filter(F.col("_rn") == 1)
+        .drop("_rn")
+    )
+    latest_meta_cols = [c for c in current_cols if c not in {prt, ts}]
+    latest_case2_df = (
+        full_anchor_df
+        .select(
+            F.col(pk),
+            F.col("latest_forward_month").alias(prt),
+            F.col("latest_forward_ts").alias(ts),
+            *[F.col(h) for h in history_cols],
+        )
+        .join(latest_meta.select(pk, *[F.col(c) for c in latest_meta_cols]), on=pk, how="left")
+    )
+    latest_case2_df = _apply_grid_columns(latest_case2_df, grid_columns, history_len)
+    write_case_table_bucketed(
+        spark=spark,
+        df=latest_case2_df,
+        table_name="temp_catalog.checkpointdb.case_2_latest",
+        config=config,
+        stage="case_2_latest_temp",
+        expected_rows=resolved_rows,
     )
 
     process_end_time = time.time()
@@ -3188,6 +3223,7 @@ def process_case_iv(spark: SparkSession, case_iv_df, case_i_result, config: Dict
     exclude_cols = set(["month_int", "max_existing_month", "max_existing_ts", "max_month_int",
                         "_is_soft_delete", "case_type", "MONTH_DIFF", "min_month_for_new_account", 
                         "count_months_for_new_account"])
+    exclude_cols.update([f"{rc['name']}_history" for rc in rolling_columns])
     exclude_cols.update([c for c in all_new_account_months.columns if c.startswith("_prepared_")])
     
     base_cols = [f"r.{c}" for c in all_new_account_months.columns if c not in exclude_cols]
@@ -4157,14 +4193,29 @@ def write_forward_results(spark: SparkSession, config: Dict[str, Any], expected_
 
 
             process_start_time = time.time()
-            # Get Latest from case 2 for merging to latest_summary
-            window_spec = Window.partitionBy(pk).orderBy(F.col(prt).desc())
+            latest_case2_full_exists = spark.catalog.tableExists("temp_catalog.checkpointdb.case_2_latest")
+            if latest_case2_full_exists:
+                latest_case_2_df = spark.read.table("temp_catalog.checkpointdb.case_2_latest")
+                logger.info("Case II latest merge source: case_2_latest (full latest-history anchor)")
+            else:
+                latest_case_2_df = case_2_merge_df
+                logger.info("Case II latest merge source: case_2 (summary history + preserved tail)")
+
+            window_spec = Window.partitionBy(pk).orderBy(F.col(prt).desc(), F.col(ts).desc())
             latest_case_2_df = (
-                case_2_merge_df
+                latest_case_2_df
                 .withColumn("_rn", F.row_number().over(window_spec))
                 .filter(F.col("_rn") == 1)
                 .drop("_rn")
             )
+            if latest_case_2_df.isEmpty():
+                logger.info("No Case II latest rows available for latest_summary merge")
+                process_end_time = time.time()
+                process_total_minutes = (process_end_time - process_start_time) / 60
+                logger.info(f"Skipped latest_summary update for Case II | Time Elapsed: {process_total_minutes:.2f} minutes")
+                logger.info("-" * 60)
+                return
+
             latest_case_2_df = align_history_arrays_to_length(
                 latest_case_2_df,
                 rolling_columns,
@@ -4179,9 +4230,12 @@ def write_forward_results(spark: SparkSession, config: Dict[str, Any], expected_
                 if col_name == pk:
                     continue
                 if col_name in history_cols:
-                    latest_update_set_exprs.append(
-                        f"s.{col_name} = {latest_history_preserve_tail_expr(col_name, summary_history_len, latest_history_len)}"
-                    )
+                    if latest_case2_full_exists:
+                        latest_update_set_exprs.append(f"s.{col_name} = c.{col_name}")
+                    else:
+                        latest_update_set_exprs.append(
+                            f"s.{col_name} = {latest_history_preserve_tail_expr(col_name, summary_history_len, latest_history_len)}"
+                        )
                 else:
                     latest_update_set_exprs.append(f"s.{col_name} = c.{col_name}")
             latest_case_2_df.select(*latest_shared_cols).createOrReplaceTempView("case_2")
@@ -4255,6 +4309,7 @@ def run_pipeline(spark: SparkSession, config: Dict[str, Any]):
         # Step 1: Load and classify
         classified = load_and_classify_accounts(spark, config)
         classified.persist(StorageLevel.DISK_ONLY)
+        spark.sql("DROP TABLE IF EXISTS execution_catalog.checkpointdb.classified")
         classified.repartition(500).writeTo("execution_catalog.checkpointdb.classified").create()
 
         case_stats = classified.groupBy("case_type", "_is_soft_delete").count().collect()
@@ -4407,6 +4462,7 @@ def cleanup(spark: SparkSession):
     cleanup_tables = [
         'case_1',
         'case_2',
+        'case_2_latest',
         'case_3a',
         'case_3b',
         'case_3_latest_month_patch',
